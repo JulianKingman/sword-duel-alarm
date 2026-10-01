@@ -45,7 +45,7 @@ GitHub Pages or Netlify Drop also work: upload `index.html` and open the https a
 4. **Detection:**
    - Lit mode: turn a sword on, hold it in view, tap **Pick sword color**, then tap the glowing part on the video. The debug line shows how many pixels match. Raise the sword and confirm the glow box turns green above the dashed line.
    - Pose mode: tap **Set rack zone** and drag a box over the rack.
-5. Tap **Arm**. This unlocks audio playback (browsers block sound that was not started by a tap) and requests a screen wake lock.
+5. Tap **Arm**. This unlocks audio playback and the sword sound engine (browsers block sound that was not started by a tap) and requests a screen wake lock. Safari is stricter than Chrome here: everything that needs the tap starts in the same instant, and if the song briefly plays during the unlock the app stops it again within a second.
 
 After a reload, everything is remembered and only the **Arm** tap is needed.
 

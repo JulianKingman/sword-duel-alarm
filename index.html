@@ -753,14 +753,22 @@ function enterCooldown(now) {
 function resetState() { sm.cooldownUntil = 0; sm.vicStart = 0; setState("IDLE"); if (rec.active) stopRecording(false, "reset"); }
 
 // ---------- actions ----------
+// Safari sometimes keeps playing after the unlock's play/pause pair; this stops anything not asked for.
+let songWanted = false;
+function guardStrayPlayback() {
+  for (const ms of [300, 1200]) setTimeout(() => {
+    if (!songWanted && !audio.paused) { audio.pause(); audio.currentTime = 0; audio.volume = 1; log("stopped stray playback after unlock"); }
+  }, ms);
+}
 function playSong() {
   if (!audio.src) { log("no song loaded"); return; }
+  songWanted = true;
   fadeToken++; audio.volume = 1; audio.currentTime = 0;
   looping = S.loopEnabled;
   audio.play().then(() => log(`song playing${looping ? " (looping until victory)" : ""}`)).catch((e) => { log(`play failed: ${e.message}`); toast("Playback blocked. Tap Arm again."); });
 }
-function stopSong() { looping = false; fadeToken++; audio.pause(); audio.volume = 1; audio.currentTime = 0; }
-audio.addEventListener("ended", () => { looping = false; });
+function stopSong() { songWanted = false; looping = false; fadeToken++; audio.pause(); audio.volume = 1; audio.currentTime = 0; }
+audio.addEventListener("ended", () => { looping = false; songWanted = false; });
 
 // Volume fades. A new fade cancels any fade in progress.
 let fadeToken = 0, looping = false, seamBusy = false;
@@ -785,7 +793,7 @@ function clampTime(t) {
 async function seekWithFade(t, reason) {
   if (!audio.src) { log("no song loaded"); return; }
   if (seamBusy) return;
-  seamBusy = true;
+  seamBusy = true; songWanted = true;
   const ms = S.fadeS * 1000;
   try {
     if (!audio.paused) await fadeTo(0, ms);
@@ -1352,11 +1360,19 @@ $("armBtn").onclick = async () => {
   if (armed) { armed = false; renderArmed(); log("disarmed"); return; }
   if (S.mode === "pose" && !S.zone) { toast("Set the rack zone first"); return; }
   if (S.mode === "lit" && !S.swordColor) { toast("Pick the sword color first"); return; }
-  if (audio.src) {
-    try { await audio.play(); audio.pause(); audio.currentTime = 0; log("audio unlocked"); }
-    catch (e) { toast(`Audio unlock failed: ${e.message}`); log(`audio unlock failed: ${e.message}`); return; }
-  } else toast("No song loaded: notifications and recording only");
-  armed = true; renderArmed(); requestWakeLock(); sfxUnlock();
+  // Everything that needs the tap must start before the first await: Safari drops the tap permission after one.
+  if (S.sfxEnabled) sfxUnlock();
+  requestWakeLock();
+  let unlock = null;
+  if (audio.src) { songWanted = false; audio.volume = 0; unlock = audio.play(); }
+  else toast("No song loaded: notifications and recording only");
+  if (unlock) {
+    try { await unlock; }
+    catch (e) { audio.volume = 1; toast(`Audio unlock failed: ${e.message}`); log(`audio unlock failed: ${e.message}`); return; }
+    audio.pause(); audio.currentTime = 0; audio.volume = 1; log("audio unlocked");
+    guardStrayPlayback();
+  }
+  armed = true; renderArmed();
   if (sm.state === "COOLDOWN") { sm.cooldownUntil = 0; setState("IDLE"); }
   log(`armed (${S.mode} mode)`);
 };
