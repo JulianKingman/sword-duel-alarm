@@ -58,3 +58,10 @@ Changes requested after the original spec:
 **Test mode.** A dry-run toggle: no notification, no music, recordings discarded, cooldown and minimum duel length shortened to 5 s, every event flashed on screen and logged. Source selector: rear camera, front camera, or a video file, so pose and color detection can be checked on a laptop or with a recorded clip.
 
 **Hosting.** Deploy to Vercel (static site, zero config).
+
+## Addendum (2026-10-01): victory point, two-pose trigger, sword sounds
+
+- **Music:** song starts from 0 at trigger; while the duel is on it loops from the victory point (4:05) back to the loop start (0:15) with volume fades; at victory it fades to the victory point and plays through.
+- **Trigger gesture (lit mode default):** hold the sword upright, then turn it sideways. Orientation comes from the principal axis of the glowing pixels (angle + elongation), smoothed over 3 frames. The raise gesture remains an option and is still used for victory.
+- **Sword sounds:** color tracking runs per camera frame (pose stays at ~10 fps). Speed (frame widths/s) and turn rate (deg/s) drive a Web Audio engine: hum loop, SmoothSwing-style swing layers, swing accents, and an abrupt-stop clash (placeholder until two-color tracking). Synthesized by default; accepts a ProffieOS-style sound font. Test swing / clash / hum buttons.
+- **Next:** two-color tracking (one color per sword) for clash-on-contact.

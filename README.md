@@ -80,6 +80,18 @@ The **Test & debug** section has everything for checking detection without annoy
 - **Debug overlay** draws the skeleton, the four landmarks that matter (wrists and shoulders), the glow box and the raise line.
 - **Test trigger** and **Test victory** fire the events by hand so you can check the song, the notification and the recording flow.
 
+## Sword sounds
+
+While a lit sword is in view, the app plays a hum, swing sounds that follow how fast the sword moves and turns, and a clash when a fast-moving sword stops abruptly. The clash is a stand-in until the two swords can be told apart (different glow colors), at which point it will key off the blades meeting.
+
+- **Tracking rate.** The color tracker runs on every camera frame (about 30 fps) while the pose model runs at about 10 fps, so the swing sound lags the motion by only a few frames. The status badge shows both rates.
+- **Sounds.** With no files loaded, everything is synthesized in the browser. You can instead load a ProffieOS-style sound font: select the files `hum.wav`, `swing01.wav`…, `clash01.wav`…, optional `swingl01.wav`/`swingh01.wav` pairs for smooth swings, and `in.wav`/`out.wav` for ignition and retraction. Royalty-free sources include the Krotos lightsaber pack, Pixabay, and Freesound filtered to CC0. The font is cached on the phone.
+- **Unlocking.** Browsers block sound until a tap. Arm, or any of the sound test buttons, unlocks it. Effects play in test mode too, so you can tune them without arming.
+- **Tuning.** The two "full swing" sliders set how fast a move or turn must be for the swing sound to reach full strength. The live line under the video shows the measured speed and turn rate, so wave a sword and pick values a little under what a real swing reads. Clash sensitivity 0 turns clashes off.
+- **Test swing / Test clash / Test hum** play each effect by hand.
+
+Use the phone speaker or a wired speaker. Bluetooth adds 100 to 200 ms of delay, which makes the swing sound trail the sword.
+
 ## Recordings
 
 With **Record duels** on, the app starts recording whenever someone is in frame and keeps the file only if a duel happens. Recording stops at the victory raise. Files are stored in the browser (IndexedDB) and listed under **Recording** with Play (inline preview), Download and Delete buttons. Chrome on Android saves them as MP4 or WebM depending on what the device supports. Keep an eye on the storage line, a 10-minute duel is roughly 90 MB at the default bitrate.

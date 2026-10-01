@@ -77,6 +77,7 @@
       <span class="badge" id="bRec" hidden>● REC</span>
       <span class="badge" id="bTest" hidden>TEST MODE</span>
       <span class="badge" id="bFps">-- fps</span>
+      <span class="badge" id="bSfx" hidden>🔊</span>
       <span class="badge" id="bModel">model…</span>
       <span class="badge" id="bWake">wake: –</span>
     </div>
@@ -164,6 +165,27 @@
   </section>
 
   <section>
+    <h2>Sword sounds</h2>
+    <label class="toggle">Sword sound effects (hum, swings, clashes while a sword is lit) <input type="checkbox" id="sfxEnabled"></label>
+    <label class="field"><span class="name">Effects volume <b id="v_sfxVolume"></b></span><input type="range" id="sfxVolume" min="0" max="1" step="0.05"></label>
+    <div class="row">
+      <button id="testSwingBtn" class="small">Test swing</button>
+      <button id="testClashBtn" class="small">Test clash</button>
+    </div>
+    <button id="testHumBtn" class="small">Test hum (3 s)</button>
+    <p class="hint" id="sfxStatus">Synthesized sounds (no sound font loaded).</p>
+    <label class="field"><span class="name">Sound font files (optional, ProffieOS style: hum, swingNN, clashNN, swinglNN/swinghNN, in, out)</span><input type="file" id="fontFiles" multiple accept="audio/*,.wav,.mp3,.ogg"></label>
+    <div class="row">
+      <button id="clearFontBtn" class="small">Use synthesized sounds</button>
+      <div></div>
+    </div>
+    <label class="field"><span class="name">Speed for a full swing sound (frame widths per second) <b id="v_swingFull"></b></span><input type="range" id="swingFull" min="0.3" max="4" step="0.1"></label>
+    <label class="field"><span class="name">Turn rate for a full swing sound (degrees per second) <b id="v_turnFull"></b></span><input type="range" id="turnFull" min="100" max="1200" step="50"></label>
+    <label class="field"><span class="name">Clash sensitivity (how abrupt a stop must be) <b id="v_clashSens"></b></span><input type="range" id="clashSens" min="0" max="1" step="0.05"></label>
+    <p class="hint">Swing sound follows how fast the lit sword moves and turns. A clash plays when a fast-moving sword stops abruptly (experimental until two swords can be told apart). Sounds start after Arm or any test button, which is what unlocks audio.</p>
+  </section>
+
+  <section>
     <h2>Audio</h2>
     <input type="file" id="songFile" accept="audio/*">
     <p class="hint" id="songText">No song loaded.</p>
@@ -230,6 +252,7 @@ const DEFAULTS = {
   mode: "lit", zone: null,
   swordColor: null, colorTol: 70, minGlowPx: 60, raiseLine: 0.4,
   litGesture: "sequence", angleTolDeg: 25, minElong: 3, poseWindowMs: 3000,
+  sfxEnabled: true, sfxVolume: 0.8, swingFull: 1.5, turnFull: 500, clashSens: 0.5,
   grabWindowMs: 3000, raiseHoldMs: 500, visThresh: 0.6, cooldownS: 120,
   victoryHoldMs: 2000, minDuelS: 30, maxDuelMin: 10, victoryAction: "jump", victoryPointS: 245, loopEnabled: true, loopStartS: 15, fadeS: 1,
   topic: null, recordEnabled: true, recordAudio: false,
@@ -372,30 +395,64 @@ function setupCanvases() {
 video.addEventListener("resize", setupCanvases);
 
 // ---------- main loop ----------
-function loop(now) {
-  requestAnimationFrame(loop);
-  if (!landmarker || video.readyState < 2 || video.paused || !infer.width) return;
-  if (now - lastInferTs < 1000 / TARGET_FPS) return;
-  const dt = now - lastInferTs; lastInferTs = now;
-  fps = fps ? fps * 0.85 + (1000 / dt) * 0.15 : 1000 / dt;
+// Runs once per camera frame (about 30 fps). The cheap color tracker runs every frame; the pose model only every 1000/TARGET_FPS ms.
+let lastLm = null, lastTrackTs = 0, trackFps = 0;
+function scheduleFrame() {
+  if (typeof video.requestVideoFrameCallback === "function") video.requestVideoFrameCallback((now) => { frame(now); scheduleFrame(); });
+  else requestAnimationFrame((now) => { frame(now); scheduleFrame(); });
+}
+function frame(now) {
+  if (video.readyState < 2 || video.paused || !infer.width) return;
+  const tdt = now - lastTrackTs; lastTrackTs = now;
+  if (tdt > 0 && tdt < 1000) trackFps = trackFps ? trackFps * 0.9 + (1000 / tdt) * 0.1 : 1000 / tdt;
 
   ictx.drawImage(video, 0, 0, infer.width, infer.height);
-  const ts = Math.max(Math.round(now), lastVideoTs + 1); lastVideoTs = ts;
-  let result;
-  try { result = landmarker.detectForVideo(infer, ts); }
-  catch (e) { log(`detect error: ${e.message}`); return; }
 
-  const raw = result.landmarks && result.landmarks[0];
-  let lm = null;
-  if (raw) { history.push(raw); if (history.length > SMOOTH_FRAMES) history.shift(); lm = smooth(history); }
-  else history.length = 0;
+  if (landmarker && now - lastInferTs >= 1000 / TARGET_FPS) {
+    const dt = now - lastInferTs; lastInferTs = now;
+    fps = fps ? fps * 0.85 + (1000 / dt) * 0.15 : 1000 / dt;
+    const ts = Math.max(Math.round(now), lastVideoTs + 1); lastVideoTs = ts;
+    try {
+      const result = landmarker.detectForVideo(infer, ts);
+      const raw = result.landmarks && result.landmarks[0];
+      if (raw) { history.push(raw); if (history.length > SMOOTH_FRAMES) history.shift(); lastLm = smooth(history); }
+      else { history.length = 0; lastLm = null; }
+    } catch (e) { log(`detect error: ${e.message}`); }
+  }
 
-  const sig = analyze(lm);
+  const sig = analyze(lastLm);
+  trackMotion(sig, now);
   lastSig = sig;
   step(sig, now);
   stepRecording(sig, now);
+  sfxFrame(sig, now);
   draw(sig);
   renderLive(sig);
+}
+
+// ---------- motion of the glow (speed in frame widths per second, turn rate in degrees per second) ----------
+const motion = { prev: null, speed: 0, turn: 0, dir: 0, rawSpeed: 0, prevSpeed: 0, lastAccent: 0, lastClash: 0 };
+function trackMotion(sig, now) {
+  const g = sig.glow;
+  if (!glowLit(sig)) { motion.prev = null; motion.speed = motion.turn = motion.rawSpeed = motion.prevSpeed = 0; return; }
+  const p = motion.prev;
+  motion.prevSpeed = motion.rawSpeed;
+  if (p && now > p.t) {
+    const dt = (now - p.t) / 1000;
+    const dx = g.cx - p.cx, dy = (g.cy - p.cy) * (infer.height / infer.width);
+    let da = g.angle - p.angle; if (da > 90) da -= 180; if (da < -90) da += 180;   // a line is the same at +90 and -90
+    const speed = Math.hypot(dx, dy) / dt, turn = da / dt;
+    if (speed < 8) {                                   // a jump of more than ~8 widths/s is a tracking glitch, not a swing
+      motion.rawSpeed = speed;
+      motion.speed = motion.speed * 0.5 + speed * 0.5;
+      motion.turn = motion.turn * 0.5 + Math.abs(turn) * 0.5;
+      if (Math.abs(turn) > 60) motion.dir = Math.sign(turn);
+    }
+  }
+  motion.prev = { cx: g.cx, cy: g.cy, angle: g.angle, t: now };
+}
+function swingLevel() {
+  return Math.min(1, Math.max(motion.speed / S.swingFull, motion.turn / S.turnFull));
 }
 function smooth(frames) {
   const n = frames.length, out = [];
@@ -812,6 +869,171 @@ async function idbGet(store, key) { const db = await idb(); return new Promise((
 async function idbAll(store) { const db = await idb(); return new Promise((res, rej) => { const q = db.transaction(store).objectStore(store).getAll(); q.onsuccess = () => res(q.result || []); q.onerror = () => rej(q.error); }); }
 async function idbDelete(store, key) { const db = await idb(); return new Promise((res, rej) => { const tx = db.transaction(store, "readwrite"); tx.objectStore(store).delete(key); tx.oncomplete = () => res(); tx.onerror = () => rej(tx.error); }); }
 
+// ---------- sword sound effects (Web Audio) ----------
+// With a sound font: hum loop + SmoothSwing-style swingl/swingh loops faded by swing level, swingNN accents, clashNN hits, in/out.
+// Without one: a synthesized hum (detuned sawtooths), a noise "swing" layer that brightens with speed, and synthesized whoosh/clash.
+const sfx = { ctx: null, master: null, noise: null, unlocked: false, blade: false, nodes: null, font: null, summary: "", manualUntil: 0, manualLevel: 0, lastLevel: 0 };
+function sfxCtx() {
+  if (!sfx.ctx) {
+    sfx.ctx = new (window.AudioContext || window.webkitAudioContext)();
+    sfx.master = sfx.ctx.createGain(); sfx.master.gain.value = S.sfxVolume; sfx.master.connect(sfx.ctx.destination);
+    sfx.noise = noiseBuffer(sfx.ctx, 2);
+  }
+  return sfx.ctx;
+}
+async function sfxUnlock() {
+  const ctx = sfxCtx();
+  if (ctx.state !== "running") { try { await ctx.resume(); } catch (e) { log(`audio context: ${e.message}`); } }
+  const was = sfx.unlocked;
+  sfx.unlocked = ctx.state === "running";
+  $("bSfx").hidden = !sfx.unlocked;
+  if (sfx.unlocked && !was) log("sword sounds unlocked");
+  return sfx.unlocked;
+}
+function noiseBuffer(ctx, seconds) {
+  const buf = ctx.createBuffer(1, Math.floor(ctx.sampleRate * seconds), ctx.sampleRate), d = buf.getChannelData(0);
+  for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+  return buf;
+}
+function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+function playBuffer(buf, { gain = 1, rate = 1, loop = false, dest = sfx.master } = {}) {
+  const ctx = sfx.ctx, src = ctx.createBufferSource(); src.buffer = buf; src.loop = loop; src.playbackRate.value = rate;
+  const g = ctx.createGain(); g.gain.value = gain; src.connect(g); g.connect(dest); src.start();
+  return src;
+}
+function bladeOn() {
+  if (sfx.blade || !sfx.unlocked) return;
+  const ctx = sfx.ctx, t = ctx.currentTime;
+  const n = { humGain: ctx.createGain(), swlGain: ctx.createGain(), swhGain: ctx.createGain(), stops: [], oscs: [], bp: null };
+  for (const g of [n.humGain, n.swlGain, n.swhGain]) { g.gain.value = 0; g.connect(sfx.master); }
+  const f = sfx.font;
+  if (f) {
+    n.stops.push(playBuffer(pick(f.hum), { loop: true, dest: n.humGain }));
+    if (f.swingl.length && f.swingh.length) {
+      const i = Math.floor(Math.random() * Math.min(f.swingl.length, f.swingh.length));
+      n.stops.push(playBuffer(f.swingl[i], { loop: true, dest: n.swlGain }), playBuffer(f.swingh[i], { loop: true, dest: n.swhGain }));
+    }
+    if (f.in.length) playBuffer(pick(f.in));
+  } else {
+    const lp = ctx.createBiquadFilter(); lp.type = "lowpass"; lp.frequency.value = 420; lp.Q.value = 2; lp.connect(n.humGain);
+    for (const [freq, g, type] of [[88, 0.18, "sawtooth"], [90.7, 0.18, "sawtooth"], [176, 0.06, "sine"]]) {
+      const o = ctx.createOscillator(); o.type = type; o.frequency.value = freq;
+      const og = ctx.createGain(); og.gain.value = g; o.connect(og); og.connect(lp); o.start(); n.stops.push(o); n.oscs.push(o);
+    }
+    const bp = ctx.createBiquadFilter(); bp.type = "bandpass"; bp.frequency.value = 300; bp.Q.value = 1.2; bp.connect(n.swhGain);
+    n.stops.push(playBuffer(sfx.noise, { loop: true, dest: bp })); n.bp = bp;
+    synthWhoosh(0.7, 0.35, 150, 1800);                 // ignition
+  }
+  n.humGain.gain.setTargetAtTime(1, t, 0.15);
+  sfx.nodes = n; sfx.blade = true; sfx.lastLevel = 0;
+}
+function bladeOff() {
+  if (!sfx.blade) return;
+  const n = sfx.nodes, ctx = sfx.ctx, t = ctx.currentTime;
+  for (const g of [n.humGain, n.swlGain, n.swhGain]) g.gain.setTargetAtTime(0, t, 0.12);
+  setTimeout(() => { for (const s of n.stops) { try { s.stop(); } catch {} } }, 700);
+  if (sfx.font) { if (sfx.font.out.length) playBuffer(pick(sfx.font.out)); } else synthWhoosh(0.5, 0.4, 1200, 150);
+  sfx.nodes = null; sfx.blade = false;
+}
+function sfxSetLevel(level, dir) {
+  const n = sfx.nodes, t = sfx.ctx.currentTime;
+  n.humGain.gain.setTargetAtTime(1 - 0.5 * level, t, 0.05);
+  if (sfx.font) {
+    n.swhGain.gain.setTargetAtTime(dir >= 0 ? level : 0, t, 0.05);
+    n.swlGain.gain.setTargetAtTime(dir < 0 ? level : 0, t, 0.05);
+  } else {
+    n.swhGain.gain.setTargetAtTime(level * 0.9, t, 0.05);
+    n.bp.frequency.setTargetAtTime(300 + level * 1700, t, 0.05);
+    for (const o of n.oscs) o.detune.setTargetAtTime(dir * level * 150, t, 0.05);   // small doppler-style pitch bend
+  }
+}
+function synthWhoosh(gain, seconds, f0, f1) {
+  const ctx = sfx.ctx, t = ctx.currentTime;
+  const bp = ctx.createBiquadFilter(); bp.type = "bandpass"; bp.Q.value = 1.5;
+  bp.frequency.setValueAtTime(f0, t); bp.frequency.exponentialRampToValueAtTime(f1, t + seconds * 0.6); bp.frequency.exponentialRampToValueAtTime(f0, t + seconds);
+  const g = ctx.createGain(); g.gain.setValueAtTime(0.001, t); g.gain.exponentialRampToValueAtTime(gain, t + seconds * 0.3); g.gain.exponentialRampToValueAtTime(0.001, t + seconds);
+  bp.connect(g); g.connect(sfx.master);
+  playBuffer(sfx.noise, { dest: bp }).stop(t + seconds + 0.05);
+}
+function sfxSwingAccent(level) {
+  if (sfx.font) { if (sfx.font.swing.length) playBuffer(pick(sfx.font.swing), { gain: 0.5 + 0.5 * level, rate: 0.95 + Math.random() * 0.1 }); }
+  else synthWhoosh(0.4 + 0.5 * level, 0.3, 300, 2200);
+}
+function sfxClash() {
+  const ctx = sfx.ctx, t = ctx.currentTime;
+  if (sfx.font) { if (sfx.font.clash.length) playBuffer(pick(sfx.font.clash), { rate: 0.95 + Math.random() * 0.1 }); }
+  else {
+    const hp = ctx.createBiquadFilter(); hp.type = "highpass"; hp.frequency.value = 1800;
+    const g = ctx.createGain(); g.gain.setValueAtTime(1, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.35);
+    hp.connect(g); g.connect(sfx.master);
+    playBuffer(sfx.noise, { dest: hp }).stop(t + 0.4);
+    const o = ctx.createOscillator(); o.type = "square"; o.frequency.setValueAtTime(1400, t); o.frequency.exponentialRampToValueAtTime(300, t + 0.25);
+    const og = ctx.createGain(); og.gain.setValueAtTime(0.35, t); og.gain.exponentialRampToValueAtTime(0.001, t + 0.3);
+    o.connect(og); og.connect(sfx.master); o.start(t); o.stop(t + 0.3);
+  }
+  if (sfx.nodes) { const hg = sfx.nodes.humGain.gain; hg.cancelScheduledValues(t); hg.setValueAtTime(0.15, t); hg.setTargetAtTime(1, t + 0.1, 0.2); }
+}
+// Called every tracked frame: keeps the blade sound in step with the glow and its motion.
+function sfxFrame(sig, now) {
+  if (!S.sfxEnabled || !sfx.unlocked) { if (sfx.blade) bladeOff(); return; }
+  const manual = now < sfx.manualUntil;
+  const lit = glowLit(sig) || manual;
+  if (lit && !sfx.blade) bladeOn();
+  else if (!lit && sfx.blade && now - sm.lastLit > GLOW_LOST_MS) bladeOff();
+  if (!sfx.blade) return;
+  const level = manual ? sfx.manualLevel : swingLevel();
+  sfxSetLevel(level, motion.dir || 1);
+  if (!manual) {
+    if (level > 0.6 && sfx.lastLevel <= 0.6 && now - motion.lastAccent > 300) { motion.lastAccent = now; sfxSwingAccent(level); }
+    const drop = motion.prevSpeed - motion.rawSpeed, minSpeed = 0.6 * S.swingFull * (1.2 - S.clashSens);
+    if (S.clashSens > 0 && motion.prevSpeed > minSpeed && drop > 0.8 * motion.prevSpeed && now - motion.lastClash > 400) { motion.lastClash = now; sfxClash(); log("clash (abrupt stop)"); }
+  }
+  sfx.lastLevel = level;
+}
+const FONT_KINDS = { hum: /^hum\d*$/i, swingl: /^swingl\d*$/i, swingh: /^swingh\d*$/i, swing: /^(swing|swng)\d*$/i, clash: /^(clash|clsh)\d*$/i, in: /^(in|poweron|ignite)\d*$/i, out: /^(out|poweroff|retract)\d*$/i };
+async function loadFont(files, cache) {
+  const ctx = sfxCtx();
+  const font = { hum: [], swingl: [], swingh: [], swing: [], clash: [], in: [], out: [] }, kept = [];
+  for (const f of files) {
+    const base = f.name.replace(/\.[^.]+$/, "");
+    const kind = Object.keys(FONT_KINDS).find((k) => FONT_KINDS[k].test(base));
+    if (!kind) continue;
+    try { font[kind].push(await ctx.decodeAudioData(await f.arrayBuffer())); kept.push(f); }
+    catch (e) { log(`could not decode ${f.name}: ${e.message}`); }
+  }
+  if (!font.hum.length) { toast("No hum file found. A font needs at least hum.wav"); return; }
+  if (sfx.blade) bladeOff();
+  sfx.font = font;
+  sfx.summary = `Sound font: hum ${font.hum.length}, swing ${font.swing.length}, clash ${font.clash.length}, smooth-swing pairs ${Math.min(font.swingl.length, font.swingh.length)}, in ${font.in.length}, out ${font.out.length}.`;
+  log(sfx.summary);
+  if (cache) { try { await idbPut("files", "font", { files: kept.map((f) => ({ name: f.name, blob: f })) }); } catch (e) { log(`font cache failed: ${e.message}`); } }
+  render();
+}
+async function clearFont() {
+  if (sfx.blade) bladeOff();
+  sfx.font = null; sfx.summary = "";
+  try { await idbDelete("files", "font"); } catch {}
+  log("using synthesized sword sounds"); render();
+}
+// Test buttons: hold the blade on for a moment and drive the swing level by hand.
+async function sfxTest(kind) {
+  if (!(await sfxUnlock())) { toast("Audio is blocked"); return; }
+  const now = performance.now();
+  sfx.manualUntil = now + (kind === "hum" ? 3000 : 1500); sfx.manualLevel = 0;
+  bladeOn();
+  if (kind === "swing") {
+    const t0 = now, iv = setInterval(() => {
+      const k = (performance.now() - t0) / 600;
+      sfx.manualLevel = k < 0.4 ? k / 0.4 : Math.max(0, 1 - (k - 0.4) / 0.6);
+      if (sfx.blade) sfxSetLevel(sfx.manualLevel, 1);
+      if (k >= 1) clearInterval(iv);
+    }, 30);
+    setTimeout(() => sfxSwingAccent(1), 150);
+  } else if (kind === "clash") setTimeout(sfxClash, 200);
+  log(`test ${kind}`);
+  setTimeout(() => { if (!(lastSig && glowLit(lastSig))) bladeOff(); }, sfx.manualUntil - now + 200);
+}
+
 // ---------- audio file ----------
 let songURL = null;
 function loadSong(blob, name) {
@@ -942,7 +1164,7 @@ function sampleColor(p) {
 
 // ---------- UI binding ----------
 function renderLive(sig) {
-  $("bFps").textContent = `${fps.toFixed(0)} fps`;
+  $("bFps").textContent = `track ${trackFps.toFixed(0)} / pose ${fps.toFixed(0)} fps`;
   const lm = sig.lm, f = (p) => `${p.x.toFixed(2)},${p.y.toFixed(2)} v${p.visibility.toFixed(2)}`;
   const parts = [];
   if (lm) parts.push(`L wrist ${f(lm[15])}  R wrist ${f(lm[16])}`, `L shoulder ${f(lm[11])}  R shoulder ${f(lm[12])}`);
@@ -954,6 +1176,7 @@ function renderLive(sig) {
     else if (S.litGesture === "sequence") parts.push(`glow ${g.count}px (need ${S.minGlowPx})  angle ${Math.round(Math.abs(g.angle))}° (0=sideways, 90=upright)  elongation ${g.elong.toFixed(1)}× (need ${S.minElong})  → ${glowPose(sig) || (glowLit(sig) ? "too round" : "not lit")}`);
     else parts.push(`glow ${g.count}px (need ${S.minGlowPx}) top ${g.top.toFixed(2)} vs line ${sig.raiseY.toFixed(2)}`);
     if (sm.state === "TURN") parts.push(`upright done, turn sideways within ${Math.max(0, ((sm.windowStart + S.poseWindowMs - performance.now()) / 1000)).toFixed(1)} s`);
+    if (g && g.count && glowLit(sig)) parts.push(`motion: speed ${motion.speed.toFixed(2)} W/s (full at ${S.swingFull})  turn ${motion.turn.toFixed(0)}°/s (full at ${S.turnFull})  swing level ${(swingLevel() * 100).toFixed(0)}%${sfx.blade ? "  🔊" : ""}`);
   }
   if (sm.state === "COOLDOWN") parts.push(`cooldown ${Math.max(0, Math.ceil((sm.cooldownUntil - performance.now()) / 1000))}s`);
   if (sm.state === "DUEL") parts.push(`duel ${Math.round((performance.now() - sm.triggerTime) / 1000)}s${sm.vicStart ? " · victory raise…" : sm.loweredSinceTrigger ? "" : " · waiting for sword to come down"}`);
@@ -970,7 +1193,14 @@ const FMT = {
   cooldownS: (v) => v >= 60 ? `${(v / 60).toFixed(1)} min` : `${v} s`, victoryHoldMs: (v) => `${(v / 1000).toFixed(2)} s`,
   minDuelS: (v) => `${v} s`, maxDuelMin: (v) => `${v} min`, fadeS: (v) => v ? `${v.toFixed(2)} s` : "no fade",
   angleTolDeg: (v) => `±${v}°`, minElong: (v) => `${v.toFixed(1)}×`, poseWindowMs: (v) => `${(v / 1000).toFixed(1)} s`,
+  sfxVolume: (v) => `${Math.round(v * 100)}%`, swingFull: (v) => `${v.toFixed(1)} W/s`, turnFull: (v) => `${v}°/s`, clashSens: (v) => v ? `${Math.round(v * 100)}%` : "off",
 };
+$("sfxVolume").addEventListener("input", () => { if (sfx.master) sfx.master.gain.setTargetAtTime(S.sfxVolume, sfx.ctx.currentTime, 0.02); });
+$("fontFiles").addEventListener("change", (e) => { if (e.target.files.length) loadFont(Array.from(e.target.files), true); });
+$("clearFontBtn").onclick = clearFont;
+$("testSwingBtn").onclick = () => sfxTest("swing");
+$("testClashBtn").onclick = () => sfxTest("clash");
+$("testHumBtn").onclick = () => sfxTest("hum");
 $("litGesture").value = S.litGesture;
 $("litGesture").addEventListener("change", () => { S.litGesture = $("litGesture").value; save(); resetState(); render(); });
 for (const key of Object.keys(FMT)) {
@@ -1004,7 +1234,7 @@ $("previewLoopBtn").onclick = () => {
   if (S.loopStartS >= S.victoryPointS) { toast("Loop start must be before the victory point"); return; }
   looping = true; seekWithFade(Math.max(0, S.victoryPointS - 5), "preview loop");
 };
-for (const key of ["recordEnabled", "testMode", "debug"]) {
+for (const key of ["recordEnabled", "testMode", "debug", "sfxEnabled"]) {
   const el = $(key); el.checked = S[key];
   el.addEventListener("change", () => { S[key] = el.checked; save(); render(); });
 }
@@ -1042,7 +1272,7 @@ $("armBtn").onclick = async () => {
     try { await audio.play(); audio.pause(); audio.currentTime = 0; log("audio unlocked"); }
     catch (e) { toast(`Audio unlock failed: ${e.message}`); log(`audio unlock failed: ${e.message}`); return; }
   } else toast("No song loaded: notifications and recording only");
-  armed = true; renderArmed(); requestWakeLock();
+  armed = true; renderArmed(); requestWakeLock(); sfxUnlock();
   if (sm.state === "COOLDOWN") { sm.cooldownUntil = 0; setState("IDLE"); }
   log(`armed (${S.mode} mode)`);
 };
@@ -1050,6 +1280,7 @@ function render() {
   renderArmed();
   $("litPanel").hidden = S.mode !== "lit"; $("posePanel").hidden = S.mode !== "pose";
   $("sequencePanel").hidden = S.litGesture !== "sequence";
+  $("sfxStatus").textContent = sfx.font ? sfx.summary : "Synthesized sounds (no sound font loaded).";
   $("videoFile").hidden = S.source !== "file";
   $("bTest").hidden = !S.testMode;
   $("victoryPointPanel").hidden = S.victoryAction !== "jump";
@@ -1071,7 +1302,8 @@ function render() {
   catch (e) { log(`song restore failed: ${e.message}`); }
   renderRecordings();
   requestWakeLock();
-  requestAnimationFrame(loop);
+  scheduleFrame();
+  try { const font = await idbGet("files", "font"); if (font) await loadFont(font.files, false); } catch (e) { log(`sound font restore failed: ${e.message}`); }
   const [modelErr] = await Promise.all([initModel().catch((e) => e), startSource()]);
   if (modelErr) { toast(modelErr.message); log(modelErr.message); }
 })();
