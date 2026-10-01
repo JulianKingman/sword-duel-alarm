@@ -11,7 +11,11 @@ Two modes, chosen in the **Detection** section:
 - **Lit sword (default).** The swords light up, so the app looks for pixels close to a sampled glow color. "Grabbed" means the glow is visible. "Raised" means the top of the glow is above the shoulder line (from the pose model) or, when no shoulders are visible, above the fallback raise line you set with a slider. Holding the raise for the hold time triggers the alarm.
 - **Pose: grab from rack, then raise.** You draw a box over the sword rack. A wrist entering the box starts a short window. If that same wrist rises above its shoulder within the window and stays there, the alarm triggers. Use this for unlit swords.
 
-After the trigger, the app is in a **duel** phase. A sword that comes down and then is raised and held again (default 2 s) after the minimum duel length (default 30 s) counts as a **victory**. Victory sends a second notification, optionally stops the music, and ends the recording. The duel also ends after the maximum duel length or when nobody has been in frame for a minute.
+After the trigger, the app is in a **duel** phase. A sword that comes down and then is raised and held again (default 2 s) after the minimum duel length (default 30 s) counts as a **victory**. Victory sends a second notification, ends the recording, and handles the music according to the **Duel & victory** settings:
+
+- The song starts from the beginning at the trigger. While the duel is on, each time it reaches the **victory point** (default 4:05) it fades out and fades back in at the **loop start** (default 0:15), so the music keeps going for as long as the duel does.
+- At victory the song fades out, jumps to the victory point, fades back in, and plays through to the end. You can instead choose to stop the music or leave it alone.
+- The fade length is a slider (default 1 s). **Preview victory jump** and **Preview loop seam** let you hear both transitions without starting a duel. The duel also ends after the maximum duel length or when nobody has been in frame for a minute.
 
 State labels shown on screen: `IDLE → GRABBED → RAISED → TRIGGERED → DUEL → VICTORY → COOLDOWN`.
 
