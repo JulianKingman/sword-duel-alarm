@@ -8,7 +8,11 @@ Everything lives in `index.html`. There is no backend. The pose model (MediaPipe
 
 Two modes, chosen in the **Detection** section:
 
-- **Lit sword (default).** The swords light up, so the app looks for pixels close to a sampled glow color. "Grabbed" means the glow is visible. "Raised" means the top of the glow is above the shoulder line (from the pose model) or, when no shoulders are visible, above the fallback raise line you set with a slider. Holding the raise for the hold time triggers the alarm.
+- **Lit sword (default).** The swords light up, so the app looks for pixels close to a sampled glow color and tracks them with a detection box. "Grabbed" means the glow is visible. The trigger gesture is then one of:
+  - **Upright, then sideways (default).** Hold the sword straight up and down for the hold time, then within a few seconds turn it flat and hold again. The app works out the sword's angle from the spread of glowing pixels, so a tilted sword reads as "tilted" rather than fooling a plain box check. Tune the angle tolerance, the minimum elongation (a lit sword seen end-on is too round to have an angle) and the time allowed between the poses.
+  - **Raise above the shoulder line.** The top of the glow must be above the shoulder line (from the pose model) or, when no shoulders are visible, above the fallback raise line you set with a slider.
+
+  Victory is still a raise: the sword comes down after the opening, then is raised above the shoulder line and held.
 - **Pose: grab from rack, then raise.** You draw a box over the sword rack. A wrist entering the box starts a short window. If that same wrist rises above its shoulder within the window and stays there, the alarm triggers. Use this for unlit swords.
 
 After the trigger, the app is in a **duel** phase. A sword that comes down and then is raised and held again (default 2 s) after the minimum duel length (default 30 s) counts as a **victory**. Victory sends a second notification, ends the recording, and handles the music according to the **Duel & victory** settings:

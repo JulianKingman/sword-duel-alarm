@@ -23,7 +23,8 @@
   .stage .hint { position:absolute; left:0; right:0; bottom:0; padding:8px; background:rgba(0,0,0,.6); font-size:14px; text-align:center; }
   .status { display:grid; grid-template-columns:1fr auto; gap:6px 12px; margin:10px 0; padding:10px 12px; background:var(--panel); border-radius:12px; }
   .state { font-size:24px; font-weight:800; letter-spacing:.02em; }
-  .state[data-s="IDLE"] { color:var(--muted); } .state[data-s="GRABBED"] { color:var(--warn); } .state[data-s="RAISED"] { color:#ffd166; }
+  .state[data-s="IDLE"] { color:var(--muted); } .state[data-s="GRABBED"] { color:var(--warn); }
+  .state[data-s="RAISED"], .state[data-s="UPRIGHT"], .state[data-s="TURN"], .state[data-s="SIDEWAYS"] { color:#ffd166; }
   .state[data-s="TRIGGERED"], .state[data-s="VICTORY"] { color:var(--accent); } .state[data-s="DUEL"] { color:#ff8fa3; } .state[data-s="COOLDOWN"] { color:#8ecae6; }
   .badges { display:flex; flex-wrap:wrap; gap:6px; justify-content:flex-end; align-content:center; }
   .badge { font-size:12px; padding:3px 8px; border-radius:999px; background:#2a2a2a; color:var(--muted); white-space:nowrap; }
@@ -109,7 +110,18 @@
       <p class="hint">Light a sword, hold it in view, tap "Pick sword color", then tap the glowing part on the video.</p>
       <label class="field"><span class="name">Color tolerance <b id="v_colorTol"></b></span><input type="range" id="colorTol" min="20" max="160" step="5"></label>
       <label class="field"><span class="name">Minimum glow pixels <b id="v_minGlowPx"></b></span><input type="range" id="minGlowPx" min="10" max="600" step="10"></label>
-      <label class="field"><span class="name">Fallback raise line (used when no shoulders are visible) <b id="v_raiseLine"></b></span><input type="range" id="raiseLine" min="0.1" max="0.9" step="0.05"></label>
+      <label class="field"><span class="name">Trigger gesture</span>
+        <select id="litGesture">
+          <option value="sequence">Hold sword upright, then turn it sideways</option>
+          <option value="raise">Raise sword above the shoulder line</option>
+        </select>
+      </label>
+      <div id="sequencePanel">
+        <label class="field"><span class="name">Angle tolerance (how far from exactly upright or sideways still counts) <b id="v_angleTolDeg"></b></span><input type="range" id="angleTolDeg" min="10" max="45" step="5"></label>
+        <label class="field"><span class="name">Minimum elongation (how much longer than wide the glow must be) <b id="v_minElong"></b></span><input type="range" id="minElong" min="1.5" max="6" step="0.5"></label>
+        <label class="field"><span class="name">Time allowed between the two poses <b id="v_poseWindowMs"></b></span><input type="range" id="poseWindowMs" min="1000" max="10000" step="500"></label>
+      </div>
+      <label class="field"><span class="name">Raise line when no shoulders are visible (used for the raise gesture and for victory) <b id="v_raiseLine"></b></span><input type="range" id="raiseLine" min="0.1" max="0.9" step="0.05"></label>
     </div>
 
     <div id="posePanel">
@@ -121,7 +133,7 @@
       <label class="field"><span class="name">Grab → raise window <b id="v_grabWindowMs"></b></span><input type="range" id="grabWindowMs" min="1000" max="10000" step="500"></label>
     </div>
 
-    <label class="field"><span class="name">Raise hold time <b id="v_raiseHoldMs"></b></span><input type="range" id="raiseHoldMs" min="100" max="3000" step="100"></label>
+    <label class="field"><span class="name">Pose hold time (how long each pose must be held) <b id="v_raiseHoldMs"></b></span><input type="range" id="raiseHoldMs" min="100" max="3000" step="100"></label>
     <label class="field"><span class="name">Landmark visibility threshold <b id="v_visThresh"></b></span><input type="range" id="visThresh" min="0.3" max="0.95" step="0.05"></label>
     <label class="field"><span class="name">Cooldown after a trigger <b id="v_cooldownS"></b></span><input type="range" id="cooldownS" min="5" max="600" step="5"></label>
   </section>
@@ -217,6 +229,7 @@ const GLOW_LOST_MS = 1000;
 const DEFAULTS = {
   mode: "lit", zone: null,
   swordColor: null, colorTol: 70, minGlowPx: 60, raiseLine: 0.4,
+  litGesture: "sequence", angleTolDeg: 25, minElong: 3, poseWindowMs: 3000,
   grabWindowMs: 3000, raiseHoldMs: 500, visThresh: 0.6, cooldownS: 120,
   victoryHoldMs: 2000, minDuelS: 30, maxDuelMin: 10, victoryAction: "jump", victoryPointS: 245, loopEnabled: true, loopStartS: 15, fadeS: 1,
   topic: null, recordEnabled: true, recordAudio: false,
@@ -284,7 +297,7 @@ let pickMode = null;          // "zone" | "color" | null
 let drag = null;
 let lastSig = null;
 
-const sm = { state: "IDLE", wrist: null, grabTime: 0, lastLit: 0, raiseStart: 0, triggerTime: 0, victoryTime: 0, vicStart: 0, loweredSinceTrigger: false, cooldownUntil: 0, lastPresence: 0 };
+const sm = { state: "IDLE", wrist: null, grabTime: 0, lastLit: 0, raiseStart: 0, poseStart: 0, windowStart: 0, triggerTime: 0, victoryTime: 0, vicStart: 0, loweredSinceTrigger: false, cooldownUntil: 0, lastPresence: 0 };
 const rec = { recorder: null, chunks: [], active: false, keep: false, start: 0, lastPresence: 0, mime: "" };
 
 function setState(s) {
@@ -410,7 +423,7 @@ function findGlow() {
   const w = infer.width, h = infer.height;
   const img = ictx.getImageData(0, 0, w, h).data;
   const { r, g, b } = S.swordColor, tol2 = S.colorTol * S.colorTol;
-  let count = 0, sx = 0, sy = 0, top = -1;
+  let count = 0, sx = 0, sy = 0, sxx = 0, syy = 0, sxy = 0, top = -1;
   let minX = w, maxX = 0, maxY = 0;
   for (let y = 0; y < h; y++) {
     let rowHits = 0;
@@ -418,14 +431,40 @@ function findGlow() {
       const i = (y * w + x) * 4;
       const dr = img[i] - r, dg = img[i + 1] - g, db = img[i + 2] - b;
       if (dr * dr + dg * dg + db * db <= tol2) {
-        count++; sx += x; sy += y; rowHits++;
+        count++; sx += x; sy += y; sxx += x * x; syy += y * y; sxy += x * y; rowHits++;
         if (x < minX) minX = x; if (x > maxX) maxX = x; maxY = y;
       }
     }
     if (top < 0 && rowHits >= 2) top = y;   // first row with at least 2 hits, to ignore lone noisy pixels
   }
-  if (!count) return { count: 0 };
-  return { count, cx: sx / count / w, cy: sy / count / h, top: (top < 0 ? maxY : top) / h, box: { x: minX / w, y: (top < 0 ? maxY : top) / h, w: (maxX - minX + 1) / w, h: (maxY - (top < 0 ? maxY : top) + 1) / h } };
+  if (!count) { orientHistory.length = 0; return { count: 0 }; }
+  // Orientation of the glow from its pixel spread (principal axis). angle: 0 = sideways, ±90 = upright.
+  const mx = sx / count, my = sy / count;
+  const vx = sxx / count - mx * mx, vy = syy / count - my * my, cxy = sxy / count - mx * my;
+  const rawAngle = (0.5 * Math.atan2(2 * cxy, vx - vy)) * 180 / Math.PI;
+  const tr = vx + vy, disc = Math.sqrt(Math.max(0, (tr * tr) / 4 - (vx * vy - cxy * cxy)));
+  const rawElong = Math.sqrt((tr / 2 + disc) / Math.max(tr / 2 - disc, 1e-6));
+  const o = smoothOrientation(rawAngle, rawElong);
+  const topY = top < 0 ? maxY : top;
+  return { count, cx: mx / w, cy: my / h, top: topY / h, angle: o.angle, elong: o.elong, axisLen: Math.sqrt(tr / 2 + disc) * 2 / w,
+    box: { x: minX / w, y: topY / h, w: (maxX - minX + 1) / w, h: (maxY - topY + 1) / h } };
+}
+// Average the last few orientations. Angles are doubled before averaging so that +89° and -89° (the same line) agree.
+const orientHistory = [];
+function smoothOrientation(angle, elong) {
+  orientHistory.push({ angle, elong });
+  if (orientHistory.length > SMOOTH_FRAMES) orientHistory.shift();
+  let c = 0, s = 0, e = 0;
+  for (const o of orientHistory) { const a = (2 * o.angle * Math.PI) / 180; c += Math.cos(a); s += Math.sin(a); e += o.elong; }
+  return { angle: (Math.atan2(s, c) * 180) / Math.PI / 2, elong: e / orientHistory.length };
+}
+// "upright" = long axis near vertical, "sideways" = near horizontal, else "tilted". extraTol loosens the check while a pose is being held.
+function glowPose(sig, extraTol = 0) {
+  if (!glowLit(sig) || sig.glow.elong < S.minElong) return null;
+  const tol = S.angleTolDeg + extraTol, a = Math.abs(sig.glow.angle);
+  if (90 - a <= tol) return "upright";
+  if (a <= tol) return "sideways";
+  return "tilted";
 }
 function glowLit(sig) { return !!(sig.glow && sig.glow.count >= S.minGlowPx); }
 function glowRaised(sig) { return glowLit(sig) && sig.glow.top < sig.raiseY - RAISE_MARGIN; }
@@ -450,7 +489,12 @@ function step(sig, now) {
     case "IDLE":
     case "GRABBED":
     case "RAISED":
-      if (S.mode === "lit") stepLit(sig, now); else stepPose(sig, now);
+    case "UPRIGHT":
+    case "TURN":
+    case "SIDEWAYS":
+      if (S.mode !== "lit") stepPose(sig, now);
+      else if (S.litGesture === "sequence") stepLitSequence(sig, now);
+      else stepLit(sig, now);
       break;
     case "TRIGGERED":
       if (now - sm.triggerTime >= FLASH_MS) { sm.vicStart = 0; sm.loweredSinceTrigger = false; setState("DUEL"); }
@@ -485,6 +529,35 @@ function stepLit(sig, now) {
   } else if (sm.state === "RAISED") {
     if (glowLowered(sig)) setState("GRABBED");
     else if (now - sm.raiseStart >= S.raiseHoldMs) trigger("lit sword raised");
+  }
+}
+// Lit sword, two-pose trigger: GRABBED → UPRIGHT (holding vertical) → TURN (upright done, waiting) → SIDEWAYS (holding horizontal) → TRIGGERED.
+function stepLitSequence(sig, now) {
+  const lit = glowLit(sig);
+  if (lit) sm.lastLit = now;
+  if (!lit && now - sm.lastLit > GLOW_LOST_MS && sm.state !== "IDLE") { setState("IDLE"); return; }
+  switch (sm.state) {
+    case "IDLE":
+      if (lit) { sm.grabTime = now; setState("GRABBED"); }
+      break;
+    case "RAISED":   // left over from switching gesture mid-way
+      setState("GRABBED");
+      break;
+    case "GRABBED":
+      if (glowPose(sig) === "upright") { sm.poseStart = now; setState("UPRIGHT"); }
+      break;
+    case "UPRIGHT":
+      if (glowPose(sig, 10) !== "upright") { setState("GRABBED"); break; }
+      if (now - sm.poseStart >= S.raiseHoldMs) { sm.windowStart = now; setState("TURN"); }
+      break;
+    case "TURN":
+      if (now - sm.windowStart > S.poseWindowMs) { setState("GRABBED"); break; }
+      if (glowPose(sig) === "sideways") { sm.poseStart = now; setState("SIDEWAYS"); }
+      break;
+    case "SIDEWAYS":
+      if (glowPose(sig, 10) !== "sideways") { setState(now - sm.windowStart > S.poseWindowMs ? "GRABBED" : "TURN"); break; }
+      if (now - sm.poseStart >= S.raiseHoldMs) trigger("sword held upright, then turned sideways");
+      break;
   }
 }
 function stepPose(sig, now) {
@@ -796,7 +869,17 @@ function draw(sig) {
       octx.strokeStyle = lit ? (glowRaised(sig) ? "#2dc653" : "#ffd166") : "rgba(255,255,255,.35)";
       octx.strokeRect(g.box.x * W, g.box.y * H, g.box.w * W, g.box.h * H);
       octx.beginPath(); octx.arc(g.cx * W, g.cy * H, fs / 2, 0, Math.PI * 2); octx.stroke();
-      octx.fillStyle = octx.strokeStyle; octx.fillText(`${g.count}px`, g.box.x * W, g.box.y * H - 4);
+      let label = `${g.count}px`;
+      if (S.litGesture === "sequence") {
+        // Long axis of the glow, coloured by whether it reads as upright or sideways.
+        const pose = glowPose(sig), a = (g.angle * Math.PI) / 180, len = Math.max(fs * 2, g.axisLen * W);
+        octx.strokeStyle = pose === "upright" ? "#2dc653" : pose === "sideways" ? "#8ecae6" : "rgba(255,255,255,.5)";
+        octx.lineWidth = Math.max(3, W / 200);
+        octx.beginPath(); octx.moveTo(g.cx * W - Math.cos(a) * len, g.cy * H - Math.sin(a) * len); octx.lineTo(g.cx * W + Math.cos(a) * len, g.cy * H + Math.sin(a) * len); octx.stroke();
+        octx.lineWidth = Math.max(2, W / 320);
+        label += lit ? `  ${pose || "too round"}  ${Math.round(Math.abs(g.angle))}°` : "";
+      }
+      octx.fillStyle = octx.strokeStyle; octx.fillText(label, g.box.x * W, g.box.y * H - 4);
     }
   }
   if (S.debug && sig.lm) {
@@ -864,7 +947,14 @@ function renderLive(sig) {
   const parts = [];
   if (lm) parts.push(`L wrist ${f(lm[15])}  R wrist ${f(lm[16])}`, `L shoulder ${f(lm[11])}  R shoulder ${f(lm[12])}`);
   else parts.push("no pose");
-  if (S.mode === "lit") parts.push(sig.glow ? `glow ${sig.glow.count}px (need ${S.minGlowPx})${sig.glow.count ? ` top ${sig.glow.top.toFixed(2)} vs line ${sig.raiseY.toFixed(2)}` : ""}` : "glow: pick a sword color first");
+  if (S.mode === "lit") {
+    const g = sig.glow;
+    if (!g) parts.push("glow: pick a sword color first");
+    else if (!g.count) parts.push(`glow 0px (need ${S.minGlowPx})`);
+    else if (S.litGesture === "sequence") parts.push(`glow ${g.count}px (need ${S.minGlowPx})  angle ${Math.round(Math.abs(g.angle))}° (0=sideways, 90=upright)  elongation ${g.elong.toFixed(1)}× (need ${S.minElong})  → ${glowPose(sig) || (glowLit(sig) ? "too round" : "not lit")}`);
+    else parts.push(`glow ${g.count}px (need ${S.minGlowPx}) top ${g.top.toFixed(2)} vs line ${sig.raiseY.toFixed(2)}`);
+    if (sm.state === "TURN") parts.push(`upright done, turn sideways within ${Math.max(0, ((sm.windowStart + S.poseWindowMs - performance.now()) / 1000)).toFixed(1)} s`);
+  }
   if (sm.state === "COOLDOWN") parts.push(`cooldown ${Math.max(0, Math.ceil((sm.cooldownUntil - performance.now()) / 1000))}s`);
   if (sm.state === "DUEL") parts.push(`duel ${Math.round((performance.now() - sm.triggerTime) / 1000)}s${sm.vicStart ? " · victory raise…" : sm.loweredSinceTrigger ? "" : " · waiting for sword to come down"}`);
   $("live").textContent = parts.join("\n");
@@ -879,7 +969,10 @@ const FMT = {
   grabWindowMs: (v) => `${(v / 1000).toFixed(1)} s`, raiseHoldMs: (v) => `${v} ms`, visThresh: (v) => v.toFixed(2),
   cooldownS: (v) => v >= 60 ? `${(v / 60).toFixed(1)} min` : `${v} s`, victoryHoldMs: (v) => `${(v / 1000).toFixed(2)} s`,
   minDuelS: (v) => `${v} s`, maxDuelMin: (v) => `${v} min`, fadeS: (v) => v ? `${v.toFixed(2)} s` : "no fade",
+  angleTolDeg: (v) => `±${v}°`, minElong: (v) => `${v.toFixed(1)}×`, poseWindowMs: (v) => `${(v / 1000).toFixed(1)} s`,
 };
+$("litGesture").value = S.litGesture;
+$("litGesture").addEventListener("change", () => { S.litGesture = $("litGesture").value; save(); resetState(); render(); });
 for (const key of Object.keys(FMT)) {
   const el = $(key);
   el.value = S[key];
@@ -956,6 +1049,7 @@ $("armBtn").onclick = async () => {
 function render() {
   renderArmed();
   $("litPanel").hidden = S.mode !== "lit"; $("posePanel").hidden = S.mode !== "pose";
+  $("sequencePanel").hidden = S.litGesture !== "sequence";
   $("videoFile").hidden = S.source !== "file";
   $("bTest").hidden = !S.testMode;
   $("victoryPointPanel").hidden = S.victoryAction !== "jump";
