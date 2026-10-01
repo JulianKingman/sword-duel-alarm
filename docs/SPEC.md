@@ -36,3 +36,32 @@ Pose can't see the sword itself, so a trigger is a "grab then raise" sequence:
 - The page runs for at least 1 hour plugged in without the screen sleeping.
 
 **Deliverables:** `index.html` plus a short README covering hosting steps, ntfy app setup, the Android "Stay awake" developer option, and camera placement tips (rack and standing area both in frame, camera at chest height).
+
+---
+
+## Addendum (2026-10-01): lit swords, recording, test mode, Vercel
+
+Changes requested after the original spec:
+
+**Lit-sword color detection is the primary mode.** The foam swords light up, so a lit sword is a bright, saturated color blob that is much easier to find than a wrist entering a rack zone. The app offers two detection modes:
+- **Lit sword (default):** Sample the glow color once. Each frame, count matching pixels on the downscaled frame and find the blob's top edge. "Grabbed" = glow visible. "Raised" = blob top above the shoulder line (from pose) or, when no pose is visible (dark room), above a configurable fallback line. Held for the raise-hold time → trigger.
+- **Pose grab + raise:** The original rack-zone sequence, kept as a fallback for unlit swords.
+
+**Victory and the duel phase.** After the trigger, the state machine enters a DUEL phase. A sword raised again and held for the victory-hold time (default 2 s), after a minimum duel length (default 30 s), ends the duel ("victory"). The duel also ends after a maximum length (default 10 min) or when nobody is in frame for 60 s.
+
+**Recording.** Record from the camera stream with MediaRecorder:
+- Start a pre-roll recording when someone is in frame (pose visible, or a lit sword visible).
+- Discard the pre-roll if no duel starts within 3 min or nobody is in frame for 15 s.
+- Keep recording through the duel until victory or duel end, then save to IndexedDB. The Recordings list offers download and delete.
+- Optional microphone audio (off by default).
+
+**Test mode.** A dry-run toggle: no notification, no music, recordings discarded, cooldown and minimum duel length shortened to 5 s, every event flashed on screen and logged. Source selector: rear camera, front camera, or a video file, so pose and color detection can be checked on a laptop or with a recorded clip.
+
+**Hosting.** Deploy to Vercel (static site, zero config).
+
+## Addendum (2026-10-01): victory point, two-pose trigger, sword sounds
+
+- **Music:** song starts from 0 at trigger; while the duel is on it loops from the victory point (4:05) back to the loop start (0:15) with volume fades; at victory it fades to the victory point and plays through.
+- **Trigger gesture (lit mode default):** hold the sword upright, then turn it sideways. Orientation comes from the principal axis of the glowing pixels (angle + elongation), smoothed over 3 frames. The raise gesture remains an option and is still used for victory.
+- **Sword sounds:** color tracking runs per camera frame (pose stays at ~10 fps). Speed (frame widths/s) and turn rate (deg/s) drive a Web Audio engine: hum loop, SmoothSwing-style swing layers, swing accents, and an abrupt-stop clash (placeholder until two-color tracking). Synthesized by default; accepts a ProffieOS-style sound font. Test swing / clash / hum buttons.
+- **Next:** two-color tracking (one color per sword) for clash-on-contact.

@@ -1,0 +1,1312 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#121212">
+<title>Sword Duel Alarm</title>
+<style>
+  :root { color-scheme: dark; --bg:#121212; --panel:#1d1d1f; --fg:#f2f2f2; --muted:#9a9a9a; --accent:#e63946; --ok:#2dc653; --warn:#f4a261; --line:#333; }
+  * { box-sizing: border-box; }
+  html, body { margin:0; background:var(--bg); color:var(--fg); font:16px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
+  body { padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
+  main { max-width:720px; margin:0 auto; padding:12px 12px 48px; }
+  h1 { font-size:20px; margin:4px 0 10px; display:flex; justify-content:space-between; align-items:center; }
+  h1 small { font-size:13px; color:var(--muted); font-weight:400; }
+  .banner { background:#5a1a1a; color:#ffd7d7; padding:10px 12px; border-radius:10px; margin-bottom:10px; font-size:14px; }
+  .stage { position:relative; width:100%; aspect-ratio:4/3; background:#000; border-radius:12px; overflow:hidden; touch-action:none; }
+  .stage video, .stage canvas { position:absolute; inset:0; width:100%; height:100%; }
+  .stage video { object-fit:fill; }
+  .stage.pick canvas { cursor:crosshair; }
+  .stage .flash { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; font-size:12vw; font-weight:800; text-shadow:0 2px 12px #000; background:rgba(230,57,70,.25); pointer-events:none; opacity:0; transition:opacity .15s; }
+  .stage .flash.show { opacity:1; }
+  .stage .hint { position:absolute; left:0; right:0; bottom:0; padding:8px; background:rgba(0,0,0,.6); font-size:14px; text-align:center; }
+  .status { display:grid; grid-template-columns:1fr auto; gap:6px 12px; margin:10px 0; padding:10px 12px; background:var(--panel); border-radius:12px; }
+  .state { font-size:24px; font-weight:800; letter-spacing:.02em; }
+  .state[data-s="IDLE"] { color:var(--muted); } .state[data-s="GRABBED"] { color:var(--warn); }
+  .state[data-s="RAISED"], .state[data-s="UPRIGHT"], .state[data-s="TURN"], .state[data-s="SIDEWAYS"] { color:#ffd166; }
+  .state[data-s="TRIGGERED"], .state[data-s="VICTORY"] { color:var(--accent); } .state[data-s="DUEL"] { color:#ff8fa3; } .state[data-s="COOLDOWN"] { color:#8ecae6; }
+  .badges { display:flex; flex-wrap:wrap; gap:6px; justify-content:flex-end; align-content:center; }
+  .badge { font-size:12px; padding:3px 8px; border-radius:999px; background:#2a2a2a; color:var(--muted); white-space:nowrap; }
+  .badge.on { background:var(--ok); color:#000; } .badge.rec { background:var(--accent); color:#fff; } .badge.warn { background:var(--warn); color:#000; }
+  .live { grid-column:1 / -1; font:13px/1.5 ui-monospace,Menlo,monospace; color:var(--muted); white-space:pre-wrap; }
+  button { min-height:56px; font-size:17px; font-weight:600; border:0; border-radius:12px; padding:0 14px; background:#2c2c2e; color:var(--fg); width:100%; }
+  button.primary { background:var(--accent); color:#fff; } button.armed { background:var(--ok); color:#000; } button.small { min-height:44px; font-size:15px; }
+  button:disabled { opacity:.4; }
+  .row { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin:10px 0; }
+  section { background:var(--panel); border-radius:12px; padding:12px; margin:12px 0; }
+  section h2 { font-size:13px; text-transform:uppercase; letter-spacing:.08em; color:var(--muted); margin:0 0 10px; }
+  .field { display:block; margin:10px 0; }
+  .field .name { display:flex; justify-content:space-between; font-size:14px; color:var(--muted); margin-bottom:2px; }
+  .field .name b { color:var(--fg); font-weight:600; }
+  input[type=range] { width:100%; height:40px; margin:0; }
+  input[type=text], select { width:100%; min-height:48px; font-size:17px; padding:0 12px; border-radius:10px; border:1px solid var(--line); background:#111; color:var(--fg); }
+  input[type=file] { width:100%; font-size:15px; margin:6px 0; }
+  .toggle { display:flex; align-items:center; justify-content:space-between; min-height:48px; font-size:16px; gap:12px; }
+  .toggle input { width:26px; height:26px; flex:none; }
+  .swatch { display:inline-block; width:26px; height:26px; border-radius:6px; border:1px solid var(--line); vertical-align:middle; margin-right:6px; }
+  .hint { font-size:14px; color:var(--muted); margin:6px 0 0; }
+  .muted { color:var(--muted); }
+  #toast { position:fixed; left:50%; bottom:24px; transform:translateX(-50%); background:#333; color:#fff; padding:12px 18px; border-radius:10px; font-size:16px; opacity:0; transition:opacity .2s; pointer-events:none; max-width:90vw; z-index:9; }
+  #toast.show { opacity:1; }
+  #log { font:12px/1.5 ui-monospace,Menlo,monospace; white-space:pre-wrap; max-height:220px; overflow:auto; background:#111; padding:8px; border-radius:8px; margin:0; color:var(--muted); }
+  .rec-item { display:flex; flex-wrap:wrap; gap:8px; align-items:center; padding:8px 0; border-top:1px solid var(--line); font-size:14px; }
+  .rec-item span { flex:1 1 200px; }
+  .rec-item button { width:auto; min-height:40px; font-size:14px; padding:0 12px; }
+  .rec-preview { margin:0 0 10px; }
+  .rec-preview video { width:100%; max-height:60vh; background:#000; border-radius:10px; display:block; }
+  [hidden] { display:none !important; }
+</style>
+</head>
+<body>
+<main>
+  <h1>⚔️ Sword Duel Alarm <small id="version">v1</small></h1>
+  <div id="httpsBanner" class="banner" hidden>Camera needs HTTPS. Open this page from its https:// address.</div>
+
+  <div class="stage" id="stage">
+    <video id="video" playsinline muted autoplay></video>
+    <canvas id="overlay"></canvas>
+    <div class="flash" id="flash"></div>
+    <div class="hint" id="stageHint" hidden></div>
+  </div>
+
+  <div class="status">
+    <div class="state" id="stateLabel" data-s="IDLE">IDLE</div>
+    <div class="badges">
+      <span class="badge" id="bArmed">disarmed</span>
+      <span class="badge" id="bRec" hidden>● REC</span>
+      <span class="badge" id="bTest" hidden>TEST MODE</span>
+      <span class="badge" id="bFps">-- fps</span>
+      <span class="badge" id="bSfx" hidden>🔊</span>
+      <span class="badge" id="bModel">model…</span>
+      <span class="badge" id="bWake">wake: –</span>
+    </div>
+    <div class="live" id="live">waiting for camera…</div>
+  </div>
+
+  <div class="row">
+    <button id="armBtn" class="primary">Arm</button>
+    <button id="stopBtn">Stop music</button>
+  </div>
+  <div class="row">
+    <button id="testTriggerBtn" class="small">Test trigger</button>
+    <button id="testVictoryBtn" class="small">Test victory</button>
+  </div>
+  <button id="camBtn" class="small" hidden>Start camera</button>
+
+  <section>
+    <h2>Detection</h2>
+    <label class="field"><span class="name">Mode</span>
+      <select id="mode">
+        <option value="lit">Lit sword (color glow)</option>
+        <option value="pose">Pose: grab from rack, then raise</option>
+      </select>
+    </label>
+
+    <div id="litPanel">
+      <div class="row">
+        <button id="pickColorBtn" class="small">Pick sword color</button>
+        <div class="toggle"><span><span class="swatch" id="swatch"></span><span id="colorText" class="muted">no color yet</span></span></div>
+      </div>
+      <p class="hint">Light a sword, hold it in view, tap "Pick sword color", then tap the glowing part on the video.</p>
+      <label class="field"><span class="name">Color tolerance <b id="v_colorTol"></b></span><input type="range" id="colorTol" min="20" max="160" step="5"></label>
+      <label class="field"><span class="name">Minimum glow pixels <b id="v_minGlowPx"></b></span><input type="range" id="minGlowPx" min="10" max="600" step="10"></label>
+      <label class="field"><span class="name">Trigger gesture</span>
+        <select id="litGesture">
+          <option value="sequence">Hold sword upright, then turn it sideways</option>
+          <option value="raise">Raise sword above the shoulder line</option>
+        </select>
+      </label>
+      <div id="sequencePanel">
+        <label class="field"><span class="name">Angle tolerance (how far from exactly upright or sideways still counts) <b id="v_angleTolDeg"></b></span><input type="range" id="angleTolDeg" min="10" max="45" step="5"></label>
+        <label class="field"><span class="name">Minimum elongation (how much longer than wide the glow must be) <b id="v_minElong"></b></span><input type="range" id="minElong" min="1.5" max="6" step="0.5"></label>
+        <label class="field"><span class="name">Time allowed between the two poses <b id="v_poseWindowMs"></b></span><input type="range" id="poseWindowMs" min="1000" max="10000" step="500"></label>
+      </div>
+      <label class="field"><span class="name">Raise line when no shoulders are visible (used for the raise gesture and for victory) <b id="v_raiseLine"></b></span><input type="range" id="raiseLine" min="0.1" max="0.9" step="0.05"></label>
+    </div>
+
+    <div id="posePanel">
+      <div class="row">
+        <button id="zoneBtn" class="small">Set rack zone</button>
+        <button id="clearZoneBtn" class="small">Clear zone</button>
+      </div>
+      <p class="hint" id="zoneText">No rack zone set. Tap "Set rack zone", then drag a box over the sword rack.</p>
+      <label class="field"><span class="name">Grab → raise window <b id="v_grabWindowMs"></b></span><input type="range" id="grabWindowMs" min="1000" max="10000" step="500"></label>
+    </div>
+
+    <label class="field"><span class="name">Pose hold time (how long each pose must be held) <b id="v_raiseHoldMs"></b></span><input type="range" id="raiseHoldMs" min="100" max="3000" step="100"></label>
+    <label class="field"><span class="name">Landmark visibility threshold <b id="v_visThresh"></b></span><input type="range" id="visThresh" min="0.3" max="0.95" step="0.05"></label>
+    <label class="field"><span class="name">Cooldown after a trigger <b id="v_cooldownS"></b></span><input type="range" id="cooldownS" min="5" max="600" step="5"></label>
+  </section>
+
+  <section>
+    <h2>Duel &amp; victory</h2>
+    <label class="field"><span class="name">Victory raise hold <b id="v_victoryHoldMs"></b></span><input type="range" id="victoryHoldMs" min="500" max="6000" step="250"></label>
+    <label class="field"><span class="name">Minimum duel length before victory counts <b id="v_minDuelS"></b></span><input type="range" id="minDuelS" min="5" max="300" step="5"></label>
+    <label class="field"><span class="name">Maximum duel length <b id="v_maxDuelMin"></b></span><input type="range" id="maxDuelMin" min="1" max="30" step="1"></label>
+    <label class="field"><span class="name">At victory, the music…</span>
+      <select id="victoryAction">
+        <option value="jump">jumps to the victory point</option>
+        <option value="stop">stops</option>
+        <option value="none">keeps playing</option>
+      </select>
+    </label>
+    <div id="victoryPointPanel">
+      <label class="field"><span class="name">Victory point in the song (mm:ss) <b id="v_victoryPoint"></b></span><input type="text" id="victoryPoint" inputmode="decimal" placeholder="e.g. 4:05"></label>
+      <label class="toggle">Loop the song until victory (victory point → loop start) <input type="checkbox" id="loopEnabled"></label>
+      <label class="field"><span class="name">Loop start (mm:ss) <b id="v_loopStart"></b></span><input type="text" id="loopStart" inputmode="decimal" placeholder="e.g. 0:15"></label>
+      <label class="field"><span class="name">Fade length at each transition <b id="v_fadeS"></b></span><input type="range" id="fadeS" min="0" max="3" step="0.25"></label>
+      <div class="row">
+        <button id="previewVictoryBtn" class="small">Preview victory jump</button>
+        <button id="previewLoopBtn" class="small">Preview loop seam</button>
+      </div>
+      <p class="hint">During the duel the song plays from the start and, on reaching the victory point, fades back to the loop start. At victory it fades to the victory point and plays through to the end.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>Sword sounds</h2>
+    <label class="toggle">Sword sound effects (hum, swings, clashes while a sword is lit) <input type="checkbox" id="sfxEnabled"></label>
+    <label class="field"><span class="name">Effects volume <b id="v_sfxVolume"></b></span><input type="range" id="sfxVolume" min="0" max="1" step="0.05"></label>
+    <div class="row">
+      <button id="testSwingBtn" class="small">Test swing</button>
+      <button id="testClashBtn" class="small">Test clash</button>
+    </div>
+    <button id="testHumBtn" class="small">Test hum (3 s)</button>
+    <p class="hint" id="sfxStatus">Synthesized sounds (no sound font loaded).</p>
+    <label class="field"><span class="name">Sound font files (optional, ProffieOS style: hum, swingNN, clashNN, swinglNN/swinghNN, in, out)</span><input type="file" id="fontFiles" multiple accept="audio/*,.wav,.mp3,.ogg"></label>
+    <div class="row">
+      <button id="clearFontBtn" class="small">Use synthesized sounds</button>
+      <div></div>
+    </div>
+    <label class="field"><span class="name">Speed for a full swing sound (frame widths per second) <b id="v_swingFull"></b></span><input type="range" id="swingFull" min="0.3" max="4" step="0.1"></label>
+    <label class="field"><span class="name">Turn rate for a full swing sound (degrees per second) <b id="v_turnFull"></b></span><input type="range" id="turnFull" min="100" max="1200" step="50"></label>
+    <label class="field"><span class="name">Clash sensitivity (how abrupt a stop must be) <b id="v_clashSens"></b></span><input type="range" id="clashSens" min="0" max="1" step="0.05"></label>
+    <p class="hint">Swing sound follows how fast the lit sword moves and turns. A clash plays when a fast-moving sword stops abruptly (experimental until two swords can be told apart). Sounds start after Arm or any test button, which is what unlocks audio.</p>
+  </section>
+
+  <section>
+    <h2>Audio</h2>
+    <input type="file" id="songFile" accept="audio/*">
+    <p class="hint" id="songText">No song loaded.</p>
+    <audio id="audio" preload="auto"></audio>
+  </section>
+
+  <section>
+    <h2>Notification (ntfy.sh)</h2>
+    <label class="field"><span class="name">Topic</span><input type="text" id="topic" autocapitalize="off" autocorrect="off" spellcheck="false"></label>
+    <button id="testNotifyBtn" class="small">Send test notification</button>
+    <p class="hint">Subscribe to this topic in the ntfy app to get alerts.</p>
+  </section>
+
+  <section>
+    <h2>Recording</h2>
+    <label class="toggle">Record duels <input type="checkbox" id="recordEnabled"></label>
+    <label class="toggle">Record microphone audio too <input type="checkbox" id="recordAudio"></label>
+    <p class="hint">Recording starts when someone is in frame and is kept only if a duel happens. It stops at a victory raise.</p>
+    <div id="recList"></div>
+    <p class="hint" id="storageText"></p>
+  </section>
+
+  <section>
+    <h2>Test &amp; debug</h2>
+    <label class="field"><span class="name">Video source</span>
+      <select id="source">
+        <option value="environment">Rear camera</option>
+        <option value="user">Front camera</option>
+        <option value="file">Video file</option>
+      </select>
+    </label>
+    <input type="file" id="videoFile" accept="video/*" hidden>
+    <label class="toggle">Test mode (dry run: no music, no notification, nothing saved; short cooldown) <input type="checkbox" id="testMode"></label>
+    <label class="toggle">Debug overlay (skeleton, landmarks, glow box) <input type="checkbox" id="debug"></label>
+    <div class="row">
+      <button id="resetBtn" class="small">Reset state</button>
+      <button id="clearLogBtn" class="small">Clear log</button>
+    </div>
+    <pre id="log"></pre>
+  </section>
+</main>
+<div id="toast"></div>
+
+<script type="module">
+import { PoseLandmarker, FilesetResolver, DrawingUtils } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.0.1/vision_bundle.mjs";
+
+const MP_VERSION = "1.0.1";
+const WASM_URL = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MP_VERSION}/wasm`;
+const MODEL_URL = "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task";
+const LM = { LSHOULDER: 11, RSHOULDER: 12, LWRIST: 15, RWRIST: 16 };
+const SHOULDER_OF = { 15: 11, 16: 12 };
+const WRISTS = [15, 16];
+const TARGET_FPS = 12;
+const SMOOTH_FRAMES = 3;
+const INFER_WIDTH = 320;
+const RAISE_MARGIN = 0.02;          // hysteresis around the shoulder line, in frame heights
+const FLASH_MS = 1500;
+const PREROLL_MAX_MS = 3 * 60 * 1000;
+const PREROLL_ABSENT_MS = 15 * 1000;
+const DUEL_ABSENT_MS = 60 * 1000;
+const GLOW_LOST_MS = 1000;
+
+const DEFAULTS = {
+  mode: "lit", zone: null,
+  swordColor: null, colorTol: 70, minGlowPx: 60, raiseLine: 0.4,
+  litGesture: "sequence", angleTolDeg: 25, minElong: 3, poseWindowMs: 3000,
+  sfxEnabled: true, sfxVolume: 0.8, swingFull: 1.5, turnFull: 500, clashSens: 0.5,
+  grabWindowMs: 3000, raiseHoldMs: 500, visThresh: 0.6, cooldownS: 120,
+  victoryHoldMs: 2000, minDuelS: 30, maxDuelMin: 10, victoryAction: "jump", victoryPointS: 245, loopEnabled: true, loopStartS: 15, fadeS: 1,
+  topic: null, recordEnabled: true, recordAudio: false,
+  source: "environment", testMode: false, debug: true,
+};
+const SETTINGS_KEY = "sword-duel-alarm:v1";
+const $ = (id) => document.getElementById(id);
+
+// ---------- settings ----------
+let S = loadSettings();
+function loadSettings() {
+  let saved = {};
+  try { saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}"); } catch { saved = {}; }
+  const s = { ...DEFAULTS, ...saved };
+  if (!s.topic) s.topic = "sword-" + randomId(10);
+  if (saved.stopAtVictory === false && !saved.victoryAction) s.victoryAction = "none";   // older setting
+  delete s.stopAtVictory;
+  return s;
+}
+function save() { localStorage.setItem(SETTINGS_KEY, JSON.stringify(S)); }
+function randomId(n) {
+  const chars = "abcdefghijkmnpqrstuvwxyz23456789";
+  const bytes = crypto.getRandomValues(new Uint8Array(n));
+  return Array.from(bytes, (b) => chars[b % chars.length]).join("");
+}
+
+// ---------- DOM ----------
+const video = $("video"), overlay = $("overlay"), stage = $("stage"), flashEl = $("flash"), stageHint = $("stageHint");
+const octx = overlay.getContext("2d");
+const infer = document.createElement("canvas");
+const ictx = infer.getContext("2d", { willReadFrequently: true });
+const audio = $("audio");
+const drawer = new DrawingUtils(octx);
+
+// ---------- log / toast ----------
+const logLines = [];
+function log(msg) {
+  const t = new Date().toLocaleTimeString([], { hour12: false });
+  logLines.push(`${t}  ${msg}`);
+  if (logLines.length > 80) logLines.shift();
+  $("log").textContent = logLines.join("\n");
+  $("log").scrollTop = $("log").scrollHeight;
+  console.log("[duel]", msg);
+}
+let toastTimer;
+function toast(msg) {
+  const el = $("toast"); el.textContent = msg; el.classList.add("show");
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => el.classList.remove("show"), 2800);
+}
+let flashTimer;
+function flash(text) {
+  flashEl.textContent = text; flashEl.classList.add("show");
+  clearTimeout(flashTimer); flashTimer = setTimeout(() => flashEl.classList.remove("show"), FLASH_MS);
+}
+
+// ---------- runtime state ----------
+let landmarker = null, delegateUsed = "";
+let stream = null;            // MediaStream used for recording
+let fileURL = null;           // object URL for a test video file
+let armed = false;
+let wakeLock = null;
+let fps = 0, lastInferTs = 0, lastVideoTs = -1;
+const history = [];           // last N raw landmark frames for smoothing
+let pickMode = null;          // "zone" | "color" | null
+let drag = null;
+let lastSig = null;
+
+const sm = { state: "IDLE", wrist: null, grabTime: 0, lastLit: 0, raiseStart: 0, poseStart: 0, windowStart: 0, triggerTime: 0, victoryTime: 0, vicStart: 0, loweredSinceTrigger: false, cooldownUntil: 0, lastPresence: 0 };
+const rec = { recorder: null, chunks: [], active: false, keep: false, start: 0, lastPresence: 0, mime: "" };
+
+function setState(s) {
+  if (sm.state === s) return;
+  log(`state ${sm.state} → ${s}`);
+  sm.state = s;
+  $("stateLabel").textContent = s;
+  $("stateLabel").dataset.s = s;
+}
+
+// ---------- model ----------
+async function initModel() {
+  const files = await FilesetResolver.forVisionTasks(WASM_URL);
+  for (const delegate of ["GPU", "CPU"]) {
+    try {
+      landmarker = await PoseLandmarker.createFromOptions(files, {
+        baseOptions: { modelAssetPath: MODEL_URL, delegate },
+        runningMode: "VIDEO", numPoses: 1,
+      });
+      delegateUsed = delegate;
+      $("bModel").textContent = `pose: ${delegate}`;
+      log(`pose model ready (${delegate} delegate)`);
+      return;
+    } catch (e) {
+      log(`${delegate} delegate failed: ${e.message}`);
+    }
+  }
+  $("bModel").textContent = "model failed";
+  throw new Error("Pose model failed to load on GPU and CPU");
+}
+
+// ---------- video source ----------
+function stopStream() {
+  if (video.srcObject) { for (const t of video.srcObject.getTracks()) t.stop(); video.srcObject = null; }
+  stream = null;
+}
+async function startSource() {
+  if (rec.active) stopRecording(false, "source changed");
+  stopStream();
+  video.removeAttribute("src"); video.loop = false;
+  try {
+    if (S.source === "file") {
+      if (!fileURL) { stageHint.textContent = "Choose a video file below."; stageHint.hidden = false; return; }
+      video.src = fileURL; video.loop = true; video.muted = true;
+      await video.play();
+      stream = video.captureStream ? video.captureStream() : null;
+    } else {
+      const s = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: S.source }, width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 30 } },
+        audio: S.recordAudio,
+      });
+      video.srcObject = s; video.muted = true; stream = s;
+      await video.play();
+    }
+    if (!video.videoWidth) await new Promise((r) => video.addEventListener("loadedmetadata", r, { once: true }));
+    setupCanvases();
+    $("camBtn").hidden = true; stageHint.hidden = true;
+    log(`source ${S.source}: ${video.videoWidth}x${video.videoHeight}`);
+  } catch (e) {
+    log(`source failed: ${e.name}: ${e.message}`);
+    $("camBtn").hidden = false;
+    toast(`Camera failed: ${e.message}`);
+  }
+}
+function setupCanvases() {
+  const w = video.videoWidth, h = video.videoHeight;
+  if (!w || !h) return;
+  stage.style.aspectRatio = `${w} / ${h}`;
+  overlay.width = w; overlay.height = h;
+  infer.width = INFER_WIDTH; infer.height = Math.max(1, Math.round((INFER_WIDTH * h) / w));
+}
+video.addEventListener("resize", setupCanvases);
+
+// ---------- main loop ----------
+// Runs once per camera frame (about 30 fps). The cheap color tracker runs every frame; the pose model only every 1000/TARGET_FPS ms.
+let lastLm = null, lastTrackTs = 0, trackFps = 0;
+function scheduleFrame() {
+  if (typeof video.requestVideoFrameCallback === "function") video.requestVideoFrameCallback((now) => { frame(now); scheduleFrame(); });
+  else requestAnimationFrame((now) => { frame(now); scheduleFrame(); });
+}
+function frame(now) {
+  if (video.readyState < 2 || video.paused || !infer.width) return;
+  const tdt = now - lastTrackTs; lastTrackTs = now;
+  if (tdt > 0 && tdt < 1000) trackFps = trackFps ? trackFps * 0.9 + (1000 / tdt) * 0.1 : 1000 / tdt;
+
+  ictx.drawImage(video, 0, 0, infer.width, infer.height);
+
+  if (landmarker && now - lastInferTs >= 1000 / TARGET_FPS) {
+    const dt = now - lastInferTs; lastInferTs = now;
+    fps = fps ? fps * 0.85 + (1000 / dt) * 0.15 : 1000 / dt;
+    const ts = Math.max(Math.round(now), lastVideoTs + 1); lastVideoTs = ts;
+    try {
+      const result = landmarker.detectForVideo(infer, ts);
+      const raw = result.landmarks && result.landmarks[0];
+      if (raw) { history.push(raw); if (history.length > SMOOTH_FRAMES) history.shift(); lastLm = smooth(history); }
+      else { history.length = 0; lastLm = null; }
+    } catch (e) { log(`detect error: ${e.message}`); }
+  }
+
+  const sig = analyze(lastLm);
+  trackMotion(sig, now);
+  lastSig = sig;
+  step(sig, now);
+  stepRecording(sig, now);
+  sfxFrame(sig, now);
+  draw(sig);
+  renderLive(sig);
+}
+
+// ---------- motion of the glow (speed in frame widths per second, turn rate in degrees per second) ----------
+const motion = { prev: null, speed: 0, turn: 0, dir: 0, rawSpeed: 0, prevSpeed: 0, lastAccent: 0, lastClash: 0 };
+function trackMotion(sig, now) {
+  const g = sig.glow;
+  if (!glowLit(sig)) { motion.prev = null; motion.speed = motion.turn = motion.rawSpeed = motion.prevSpeed = 0; return; }
+  const p = motion.prev;
+  motion.prevSpeed = motion.rawSpeed;
+  if (p && now > p.t) {
+    const dt = (now - p.t) / 1000;
+    const dx = g.cx - p.cx, dy = (g.cy - p.cy) * (infer.height / infer.width);
+    let da = g.angle - p.angle; if (da > 90) da -= 180; if (da < -90) da += 180;   // a line is the same at +90 and -90
+    const speed = Math.hypot(dx, dy) / dt, turn = da / dt;
+    if (speed < 8) {                                   // a jump of more than ~8 widths/s is a tracking glitch, not a swing
+      motion.rawSpeed = speed;
+      motion.speed = motion.speed * 0.5 + speed * 0.5;
+      motion.turn = motion.turn * 0.5 + Math.abs(turn) * 0.5;
+      if (Math.abs(turn) > 60) motion.dir = Math.sign(turn);
+    }
+  }
+  motion.prev = { cx: g.cx, cy: g.cy, angle: g.angle, t: now };
+}
+function swingLevel() {
+  return Math.min(1, Math.max(motion.speed / S.swingFull, motion.turn / S.turnFull));
+}
+function smooth(frames) {
+  const n = frames.length, out = [];
+  for (let i = 0; i < 33; i++) {
+    let x = 0, y = 0, z = 0, v = 0;
+    for (const f of frames) { x += f[i].x; y += f[i].y; z += f[i].z; v += f[i].visibility; }
+    out.push({ x: x / n, y: y / n, z: z / n, visibility: v / n });
+  }
+  return out;
+}
+
+// ---------- per-frame signals ----------
+function analyze(lm) {
+  const sig = { lm, person: false, shoulderY: null, raiseY: S.raiseLine, raiseFrom: "fallback", glow: null };
+  if (lm) {
+    sig.person = lm.some((p) => p.visibility >= S.visThresh);
+    const vis = [lm[LM.LSHOULDER], lm[LM.RSHOULDER]].filter((p) => p.visibility >= S.visThresh);
+    if (vis.length) { sig.shoulderY = vis.reduce((a, p) => a + p.y, 0) / vis.length; sig.raiseY = sig.shoulderY; sig.raiseFrom = "shoulders"; }
+  }
+  if (S.mode === "lit" && S.swordColor) sig.glow = findGlow();
+  return sig;
+}
+// Scan the downscaled frame for pixels close to the sampled sword color.
+function findGlow() {
+  const w = infer.width, h = infer.height;
+  const img = ictx.getImageData(0, 0, w, h).data;
+  const { r, g, b } = S.swordColor, tol2 = S.colorTol * S.colorTol;
+  let count = 0, sx = 0, sy = 0, sxx = 0, syy = 0, sxy = 0, top = -1;
+  let minX = w, maxX = 0, maxY = 0;
+  for (let y = 0; y < h; y++) {
+    let rowHits = 0;
+    for (let x = 0; x < w; x++) {
+      const i = (y * w + x) * 4;
+      const dr = img[i] - r, dg = img[i + 1] - g, db = img[i + 2] - b;
+      if (dr * dr + dg * dg + db * db <= tol2) {
+        count++; sx += x; sy += y; sxx += x * x; syy += y * y; sxy += x * y; rowHits++;
+        if (x < minX) minX = x; if (x > maxX) maxX = x; maxY = y;
+      }
+    }
+    if (top < 0 && rowHits >= 2) top = y;   // first row with at least 2 hits, to ignore lone noisy pixels
+  }
+  if (!count) { orientHistory.length = 0; return { count: 0 }; }
+  // Orientation of the glow from its pixel spread (principal axis). angle: 0 = sideways, ±90 = upright.
+  const mx = sx / count, my = sy / count;
+  const vx = sxx / count - mx * mx, vy = syy / count - my * my, cxy = sxy / count - mx * my;
+  const rawAngle = (0.5 * Math.atan2(2 * cxy, vx - vy)) * 180 / Math.PI;
+  const tr = vx + vy, disc = Math.sqrt(Math.max(0, (tr * tr) / 4 - (vx * vy - cxy * cxy)));
+  const rawElong = Math.sqrt((tr / 2 + disc) / Math.max(tr / 2 - disc, 1e-6));
+  const o = smoothOrientation(rawAngle, rawElong);
+  const topY = top < 0 ? maxY : top;
+  return { count, cx: mx / w, cy: my / h, top: topY / h, angle: o.angle, elong: o.elong, axisLen: Math.sqrt(tr / 2 + disc) * 2 / w,
+    box: { x: minX / w, y: topY / h, w: (maxX - minX + 1) / w, h: (maxY - topY + 1) / h } };
+}
+// Average the last few orientations. Angles are doubled before averaging so that +89° and -89° (the same line) agree.
+const orientHistory = [];
+function smoothOrientation(angle, elong) {
+  orientHistory.push({ angle, elong });
+  if (orientHistory.length > SMOOTH_FRAMES) orientHistory.shift();
+  let c = 0, s = 0, e = 0;
+  for (const o of orientHistory) { const a = (2 * o.angle * Math.PI) / 180; c += Math.cos(a); s += Math.sin(a); e += o.elong; }
+  return { angle: (Math.atan2(s, c) * 180) / Math.PI / 2, elong: e / orientHistory.length };
+}
+// "upright" = long axis near vertical, "sideways" = near horizontal, else "tilted". extraTol loosens the check while a pose is being held.
+function glowPose(sig, extraTol = 0) {
+  if (!glowLit(sig) || sig.glow.elong < S.minElong) return null;
+  const tol = S.angleTolDeg + extraTol, a = Math.abs(sig.glow.angle);
+  if (90 - a <= tol) return "upright";
+  if (a <= tol) return "sideways";
+  return "tilted";
+}
+function glowLit(sig) { return !!(sig.glow && sig.glow.count >= S.minGlowPx); }
+function glowRaised(sig) { return glowLit(sig) && sig.glow.top < sig.raiseY - RAISE_MARGIN; }
+function glowLowered(sig) { return !glowLit(sig) || sig.glow.top > sig.raiseY + RAISE_MARGIN; }
+function wristVisible(lm, w) { return !!lm && lm[w].visibility >= S.visThresh && lm[SHOULDER_OF[w]].visibility >= S.visThresh; }
+function wristRaised(lm, w, margin) { return wristVisible(lm, w) && lm[w].y < lm[SHOULDER_OF[w]].y - margin; }
+function wristInZone(lm, w) {
+  if (!lm || !S.zone || lm[w].visibility < S.visThresh) return false;
+  const p = lm[w], z = S.zone;
+  return p.x >= z.x && p.x <= z.x + z.w && p.y >= z.y && p.y <= z.y + z.h;
+}
+function anyRaised(sig) {
+  if (S.mode === "lit") return glowRaised(sig);
+  return WRISTS.some((w) => wristRaised(sig.lm, w, RAISE_MARGIN));
+}
+function presence(sig) { return sig.person || glowLit(sig); }
+
+// ---------- state machine ----------
+function step(sig, now) {
+  if (presence(sig)) sm.lastPresence = now;
+  switch (sm.state) {
+    case "IDLE":
+    case "GRABBED":
+    case "RAISED":
+    case "UPRIGHT":
+    case "TURN":
+    case "SIDEWAYS":
+      if (S.mode !== "lit") stepPose(sig, now);
+      else if (S.litGesture === "sequence") stepLitSequence(sig, now);
+      else stepLit(sig, now);
+      break;
+    case "TRIGGERED":
+      if (now - sm.triggerTime >= FLASH_MS) { sm.vicStart = 0; sm.loweredSinceTrigger = false; setState("DUEL"); }
+      break;
+    case "DUEL": {
+      const minDuelMs = (S.testMode ? 5 : S.minDuelS) * 1000;
+      if (anyRaised(sig)) {
+        // Only a raise that follows a lowering counts: the opening raise must come down first.
+        if (!sm.vicStart && sm.loweredSinceTrigger) sm.vicStart = now;
+        else if (sm.vicStart && now - sm.triggerTime >= minDuelMs && now - sm.vicStart >= S.victoryHoldMs) { victory(); break; }
+      } else { sm.vicStart = 0; sm.loweredSinceTrigger = true; }
+      if (now - sm.triggerTime > S.maxDuelMin * 60 * 1000) endDuel("maximum duel length reached");
+      else if (now - sm.lastPresence > DUEL_ABSENT_MS) endDuel("nobody in frame for 60 s");
+      break;
+    }
+    case "VICTORY":
+      if (now - sm.victoryTime >= FLASH_MS) enterCooldown(now);
+      break;
+    case "COOLDOWN":
+      if (now >= sm.cooldownUntil) setState("IDLE");
+      break;
+  }
+}
+function stepLit(sig, now) {
+  const lit = glowLit(sig);
+  if (lit) sm.lastLit = now;
+  if (sm.state === "IDLE") {
+    if (lit) { sm.grabTime = now; setState("GRABBED"); }
+  } else if (sm.state === "GRABBED") {
+    if (!lit) { if (now - sm.lastLit > GLOW_LOST_MS) setState("IDLE"); }
+    else if (glowRaised(sig)) { sm.raiseStart = now; setState("RAISED"); }
+  } else if (sm.state === "RAISED") {
+    if (glowLowered(sig)) setState("GRABBED");
+    else if (now - sm.raiseStart >= S.raiseHoldMs) trigger("lit sword raised");
+  }
+}
+// Lit sword, two-pose trigger: GRABBED → UPRIGHT (holding vertical) → TURN (upright done, waiting) → SIDEWAYS (holding horizontal) → TRIGGERED.
+function stepLitSequence(sig, now) {
+  const lit = glowLit(sig);
+  if (lit) sm.lastLit = now;
+  if (!lit && now - sm.lastLit > GLOW_LOST_MS && sm.state !== "IDLE") { setState("IDLE"); return; }
+  switch (sm.state) {
+    case "IDLE":
+      if (lit) { sm.grabTime = now; setState("GRABBED"); }
+      break;
+    case "RAISED":   // left over from switching gesture mid-way
+      setState("GRABBED");
+      break;
+    case "GRABBED":
+      if (glowPose(sig) === "upright") { sm.poseStart = now; setState("UPRIGHT"); }
+      break;
+    case "UPRIGHT":
+      if (glowPose(sig, 10) !== "upright") { setState("GRABBED"); break; }
+      if (now - sm.poseStart >= S.raiseHoldMs) { sm.windowStart = now; setState("TURN"); }
+      break;
+    case "TURN":
+      if (now - sm.windowStart > S.poseWindowMs) { setState("GRABBED"); break; }
+      if (glowPose(sig) === "sideways") { sm.poseStart = now; setState("SIDEWAYS"); }
+      break;
+    case "SIDEWAYS":
+      if (glowPose(sig, 10) !== "sideways") { setState(now - sm.windowStart > S.poseWindowMs ? "GRABBED" : "TURN"); break; }
+      if (now - sm.poseStart >= S.raiseHoldMs) trigger("sword held upright, then turned sideways");
+      break;
+  }
+}
+function stepPose(sig, now) {
+  const lm = sig.lm;
+  if (sm.state === "IDLE") {
+    if (!S.zone) return;
+    for (const w of WRISTS) if (wristInZone(lm, w)) { sm.wrist = w; sm.grabTime = now; setState("GRABBED"); return; }
+  } else if (sm.state === "GRABBED") {
+    const w = sm.wrist;
+    if (wristInZone(lm, w)) sm.grabTime = now;                 // still at the rack: window starts when the hand leaves
+    if (now - sm.grabTime > S.grabWindowMs) { setState("IDLE"); return; }
+    if (wristRaised(lm, w, RAISE_MARGIN)) { sm.raiseStart = now; setState("RAISED"); }
+  } else if (sm.state === "RAISED") {
+    const w = sm.wrist;
+    if (!wristRaised(lm, w, -RAISE_MARGIN)) { setState(now - sm.grabTime > S.grabWindowMs ? "IDLE" : "GRABBED"); return; }
+    if (now - sm.raiseStart >= S.raiseHoldMs) trigger("wrist raised after grab");
+  }
+}
+function cooldownMs() { return (S.testMode ? 5 : S.cooldownS) * 1000; }
+function trigger(reason) {
+  const now = performance.now();
+  sm.triggerTime = now; sm.vicStart = 0;
+  sm.cooldownUntil = now + cooldownMs();
+  setState("TRIGGERED");
+  flash("⚔️ DUEL!");
+  log(`TRIGGER: ${reason}${S.testMode ? " (test mode, no actions)" : armed ? "" : " (not armed, no actions)"}`);
+  if (armed && !S.testMode) { playSong(); notify("⚔️ Duel detected", `Someone grabbed a sword and raised it (${reason}).`); }
+}
+function victory() {
+  sm.victoryTime = performance.now();
+  setState("VICTORY");
+  flash("🏆 VICTORY");
+  log(`VICTORY: sword raised again${S.testMode ? " (test mode)" : ""}`);
+  if (armed && !S.testMode) {
+    victoryMusic();
+    notify("🏆 Duel over", "Someone raised their sword in victory.", 3);
+  }
+}
+// The end state for the music: jump to the victory point, stop, or leave it alone.
+function victoryMusic() {
+  looping = false;                                   // victory ends the duel loop; the song plays through
+  if (S.victoryAction === "none") return;
+  if (S.victoryAction === "jump" && S.victoryPointS != null) { seekWithFade(S.victoryPointS, "victory"); return; }
+  if (S.victoryAction === "jump") log("no victory point set, stopping music instead");
+  fadeTo(0, S.fadeS * 1000).then(() => { if (audio.volume === 0) stopSong(); });
+}
+function parseTime(str) {
+  const s = String(str).trim();
+  if (!s) return null;
+  const parts = s.split(":").map((p) => p.trim());
+  if (parts.some((p) => p === "" || isNaN(Number(p)))) return NaN;
+  return parts.reduce((acc, p) => acc * 60 + Number(p), 0);
+}
+function fmtTime(t) {
+  const m = Math.floor(t / 60), s = t - m * 60;
+  return `${m}:${s < 10 ? "0" : ""}${Number.isInteger(s) ? s : s.toFixed(1)}`;
+}
+function endDuel(reason) { log(`duel ended: ${reason}`); enterCooldown(performance.now()); }
+function enterCooldown(now) {
+  sm.cooldownUntil = Math.max(sm.cooldownUntil, now + 5000);
+  setState("COOLDOWN");
+}
+function resetState() { sm.cooldownUntil = 0; sm.vicStart = 0; setState("IDLE"); if (rec.active) stopRecording(false, "reset"); }
+
+// ---------- actions ----------
+function playSong() {
+  if (!audio.src) { log("no song loaded"); return; }
+  fadeToken++; audio.volume = 1; audio.currentTime = 0;
+  looping = S.loopEnabled;
+  audio.play().then(() => log(`song playing${looping ? " (looping until victory)" : ""}`)).catch((e) => { log(`play failed: ${e.message}`); toast("Playback blocked. Tap Arm again."); });
+}
+function stopSong() { looping = false; fadeToken++; audio.pause(); audio.volume = 1; audio.currentTime = 0; }
+audio.addEventListener("ended", () => { looping = false; });
+
+// Volume fades. A new fade cancels any fade in progress.
+let fadeToken = 0, looping = false, seamBusy = false;
+function fadeTo(target, ms) {
+  const token = ++fadeToken, from = audio.volume, t0 = performance.now();
+  return new Promise((res) => {
+    if (ms <= 0) { audio.volume = target; res(); return; }
+    const tick = (now) => {
+      if (token !== fadeToken) { res(); return; }
+      const k = Math.min(1, (now - t0) / ms);
+      audio.volume = from + (target - from) * k;
+      if (k < 1) requestAnimationFrame(tick); else res();
+    };
+    requestAnimationFrame(tick);
+  });
+}
+function clampTime(t) {
+  const d = audio.duration;
+  return d && isFinite(d) ? Math.min(Math.max(0, t), Math.max(0, d - 0.5)) : Math.max(0, t);
+}
+// Fade out (if playing), seek, then fade back in.
+async function seekWithFade(t, reason) {
+  if (!audio.src) { log("no song loaded"); return; }
+  if (seamBusy) return;
+  seamBusy = true;
+  const ms = S.fadeS * 1000;
+  try {
+    if (!audio.paused) await fadeTo(0, ms);
+    audio.currentTime = clampTime(t);
+    audio.volume = 0;
+    await audio.play();
+    await fadeTo(1, ms);
+    log(`${reason}: song now at ${fmtTime(clampTime(t))}`);
+  } catch (e) {
+    audio.volume = 1; log(`play failed: ${e.message}`); toast("Playback blocked. Tap Arm again.");
+  } finally { seamBusy = false; }
+}
+// The duel loop: when the song reaches the victory point, fade back to the loop start.
+audio.addEventListener("timeupdate", () => {
+  if (!looping || seamBusy || audio.paused || S.victoryPointS == null || S.loopStartS == null) return;
+  if (S.loopStartS >= S.victoryPointS) return;
+  if (audio.currentTime >= S.victoryPointS - S.fadeS) seekWithFade(S.loopStartS, "loop");
+});
+async function notify(title, message, priority = 4) {
+  const topic = S.topic.trim();
+  if (!topic) { log("ntfy: no topic"); return; }
+  try {
+    const r = await fetch("https://ntfy.sh/", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ topic, title, message: `${message} ${new Date().toLocaleTimeString()}`, priority, tags: ["crossed_swords"] }),
+    });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    log(`ntfy sent to "${topic}": ${title}`);
+  } catch (e) {
+    log(`ntfy failed: ${e.message}`);
+    toast(`Notification failed: ${e.message}`);
+  }
+}
+
+// ---------- recording ----------
+function pickMime() {
+  const c = ["video/mp4;codecs=avc1", "video/mp4", "video/webm;codecs=vp9", "video/webm;codecs=vp8", "video/webm"];
+  return c.find((m) => window.MediaRecorder && MediaRecorder.isTypeSupported(m)) || "";
+}
+function stepRecording(sig, now) {
+  if (!S.recordEnabled || !stream || !window.MediaRecorder) return;
+  const here = presence(sig);
+  if (here) rec.lastPresence = now;
+  const inDuel = sm.state === "TRIGGERED" || sm.state === "DUEL" || sm.state === "VICTORY";
+  if (!rec.active) {
+    if ((here && sm.state !== "COOLDOWN") || inDuel) startRecording(now);
+    return;
+  }
+  if (inDuel) rec.keep = true;
+  if (rec.keep) {
+    if (sm.state === "COOLDOWN" || sm.state === "IDLE") stopRecording(true, "duel ended");
+    else if (now - rec.lastPresence > DUEL_ABSENT_MS) stopRecording(true, "nobody in frame");
+  } else {
+    if (now - rec.lastPresence > PREROLL_ABSENT_MS) stopRecording(false, "nobody in frame");
+    else if (now - rec.start > PREROLL_MAX_MS) stopRecording(false, "pre-roll limit, restarting");
+  }
+}
+function startRecording(now) {
+  try {
+    rec.mime = pickMime();
+    const r = new MediaRecorder(stream, rec.mime ? { mimeType: rec.mime, videoBitsPerSecond: 1_200_000 } : undefined);
+    rec.chunks = []; rec.keep = false; rec.start = now; rec.lastPresence = now;
+    r.ondataavailable = (e) => { if (e.data && e.data.size) rec.chunks.push(e.data); };
+    r.onerror = (e) => log(`recorder error: ${e.error?.message || e}`);
+    r.start(1000);
+    rec.recorder = r; rec.active = true;
+    $("bRec").hidden = false;
+    log(`recording started (${rec.mime || "default"})`);
+  } catch (e) {
+    log(`recording failed to start: ${e.message}`);
+    S.recordEnabled = false; $("recordEnabled").checked = false; save();
+  }
+}
+function stopRecording(keep, reason) {
+  const r = rec.recorder;
+  rec.active = false; rec.recorder = null; $("bRec").hidden = true;
+  if (!r) return;
+  const chunks = rec.chunks, mime = rec.mime, startedAt = rec.start;
+  const finish = async () => {
+    const blob = new Blob(chunks, { type: mime || "video/webm" });
+    const secs = Math.round((performance.now() - startedAt) / 1000);
+    if (keep && !S.testMode && blob.size) {
+      const ext = (mime || "").includes("mp4") ? "mp4" : "webm";
+      const name = `duel-${new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19)}.${ext}`;
+      try { await idbPut("recordings", name, { name, date: Date.now(), size: blob.size, secs, type: blob.type, blob }); log(`recording saved: ${name} (${fmtBytes(blob.size)}, ${secs}s)`); }
+      catch (e) { log(`recording save failed: ${e.message}`); }
+      renderRecordings();
+    } else {
+      log(`recording discarded: ${reason}${keep && S.testMode ? " (test mode)" : ""} (${secs}s)`);
+    }
+  };
+  r.onstop = finish;
+  try { r.stop(); } catch (e) { log(`recorder stop error: ${e.message}`); finish(); }
+}
+let openPreview = null;
+function closePreview() {
+  if (!openPreview) return;
+  openPreview.video.pause();
+  openPreview.el.hidden = true; openPreview.el.replaceChildren();
+  openPreview.btn.textContent = "Play";
+  URL.revokeObjectURL(openPreview.url);
+  openPreview = null;
+}
+function fmtBytes(n) { return n > 1e6 ? `${(n / 1e6).toFixed(1)} MB` : `${Math.round(n / 1e3)} kB`; }
+async function renderRecordings() {
+  const list = $("recList"); list.innerHTML = "";
+  let items = [];
+  try { items = await idbAll("recordings"); } catch (e) { log(`recordings list failed: ${e.message}`); }
+  items.sort((a, b) => b.date - a.date);
+  for (const it of items) {
+    const row = document.createElement("div"); row.className = "rec-item";
+    const info = document.createElement("span");
+    info.textContent = `${new Date(it.date).toLocaleString()} · ${it.secs}s · ${fmtBytes(it.size)}`;
+    const play = document.createElement("button"); play.textContent = "Play";
+    const dl = document.createElement("button"); dl.textContent = "Download";
+    dl.onclick = () => { const url = URL.createObjectURL(it.blob); const a = document.createElement("a"); a.href = url; a.download = it.name; a.click(); setTimeout(() => URL.revokeObjectURL(url), 60000); };
+    const del = document.createElement("button"); del.textContent = "Delete";
+    del.onclick = async () => { closePreview(); await idbDelete("recordings", it.name); renderRecordings(); };
+    const preview = document.createElement("div"); preview.className = "rec-preview"; preview.hidden = true;
+    play.onclick = () => {
+      if (!preview.hidden) { closePreview(); return; }
+      closePreview();
+      const url = URL.createObjectURL(it.blob);
+      const v = document.createElement("video");
+      v.controls = true; v.playsInline = true; v.src = url;
+      preview.replaceChildren(v); preview.hidden = false;
+      openPreview = { el: preview, url, btn: play, video: v };
+      play.textContent = "Hide";
+      v.play().catch(() => {});
+    };
+    row.append(info, play, dl, del); list.append(row, preview);
+  }
+  if (!items.length) { const p = document.createElement("p"); p.className = "hint"; p.textContent = "No recordings yet."; list.append(p); }
+  if (navigator.storage?.estimate) {
+    const est = await navigator.storage.estimate();
+    $("storageText").textContent = `Storage used: ${fmtBytes(est.usage || 0)} of ${fmtBytes(est.quota || 0)} available.`;
+  }
+}
+
+// ---------- IndexedDB ----------
+function idb() {
+  return new Promise((res, rej) => {
+    const r = indexedDB.open("sword-duel-alarm", 2);
+    r.onupgradeneeded = () => {
+      const db = r.result;
+      if (!db.objectStoreNames.contains("files")) db.createObjectStore("files");
+      if (!db.objectStoreNames.contains("recordings")) db.createObjectStore("recordings");
+    };
+    r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
+  });
+}
+async function idbPut(store, key, val) { const db = await idb(); return new Promise((res, rej) => { const tx = db.transaction(store, "readwrite"); tx.objectStore(store).put(val, key); tx.oncomplete = () => res(); tx.onerror = () => rej(tx.error); }); }
+async function idbGet(store, key) { const db = await idb(); return new Promise((res, rej) => { const q = db.transaction(store).objectStore(store).get(key); q.onsuccess = () => res(q.result); q.onerror = () => rej(q.error); }); }
+async function idbAll(store) { const db = await idb(); return new Promise((res, rej) => { const q = db.transaction(store).objectStore(store).getAll(); q.onsuccess = () => res(q.result || []); q.onerror = () => rej(q.error); }); }
+async function idbDelete(store, key) { const db = await idb(); return new Promise((res, rej) => { const tx = db.transaction(store, "readwrite"); tx.objectStore(store).delete(key); tx.oncomplete = () => res(); tx.onerror = () => rej(tx.error); }); }
+
+// ---------- sword sound effects (Web Audio) ----------
+// With a sound font: hum loop + SmoothSwing-style swingl/swingh loops faded by swing level, swingNN accents, clashNN hits, in/out.
+// Without one: a synthesized hum (detuned sawtooths), a noise "swing" layer that brightens with speed, and synthesized whoosh/clash.
+const sfx = { ctx: null, master: null, noise: null, unlocked: false, blade: false, nodes: null, font: null, summary: "", manualUntil: 0, manualLevel: 0, lastLevel: 0 };
+function sfxCtx() {
+  if (!sfx.ctx) {
+    sfx.ctx = new (window.AudioContext || window.webkitAudioContext)();
+    sfx.master = sfx.ctx.createGain(); sfx.master.gain.value = S.sfxVolume; sfx.master.connect(sfx.ctx.destination);
+    sfx.noise = noiseBuffer(sfx.ctx, 2);
+  }
+  return sfx.ctx;
+}
+async function sfxUnlock() {
+  const ctx = sfxCtx();
+  if (ctx.state !== "running") { try { await ctx.resume(); } catch (e) { log(`audio context: ${e.message}`); } }
+  const was = sfx.unlocked;
+  sfx.unlocked = ctx.state === "running";
+  $("bSfx").hidden = !sfx.unlocked;
+  if (sfx.unlocked && !was) log("sword sounds unlocked");
+  return sfx.unlocked;
+}
+function noiseBuffer(ctx, seconds) {
+  const buf = ctx.createBuffer(1, Math.floor(ctx.sampleRate * seconds), ctx.sampleRate), d = buf.getChannelData(0);
+  for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+  return buf;
+}
+function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+function playBuffer(buf, { gain = 1, rate = 1, loop = false, dest = sfx.master } = {}) {
+  const ctx = sfx.ctx, src = ctx.createBufferSource(); src.buffer = buf; src.loop = loop; src.playbackRate.value = rate;
+  const g = ctx.createGain(); g.gain.value = gain; src.connect(g); g.connect(dest); src.start();
+  return src;
+}
+function bladeOn() {
+  if (sfx.blade || !sfx.unlocked) return;
+  const ctx = sfx.ctx, t = ctx.currentTime;
+  const n = { humGain: ctx.createGain(), swlGain: ctx.createGain(), swhGain: ctx.createGain(), stops: [], oscs: [], bp: null };
+  for (const g of [n.humGain, n.swlGain, n.swhGain]) { g.gain.value = 0; g.connect(sfx.master); }
+  const f = sfx.font;
+  if (f) {
+    n.stops.push(playBuffer(pick(f.hum), { loop: true, dest: n.humGain }));
+    if (f.swingl.length && f.swingh.length) {
+      const i = Math.floor(Math.random() * Math.min(f.swingl.length, f.swingh.length));
+      n.stops.push(playBuffer(f.swingl[i], { loop: true, dest: n.swlGain }), playBuffer(f.swingh[i], { loop: true, dest: n.swhGain }));
+    }
+    if (f.in.length) playBuffer(pick(f.in));
+  } else {
+    const lp = ctx.createBiquadFilter(); lp.type = "lowpass"; lp.frequency.value = 420; lp.Q.value = 2; lp.connect(n.humGain);
+    for (const [freq, g, type] of [[88, 0.18, "sawtooth"], [90.7, 0.18, "sawtooth"], [176, 0.06, "sine"]]) {
+      const o = ctx.createOscillator(); o.type = type; o.frequency.value = freq;
+      const og = ctx.createGain(); og.gain.value = g; o.connect(og); og.connect(lp); o.start(); n.stops.push(o); n.oscs.push(o);
+    }
+    const bp = ctx.createBiquadFilter(); bp.type = "bandpass"; bp.frequency.value = 300; bp.Q.value = 1.2; bp.connect(n.swhGain);
+    n.stops.push(playBuffer(sfx.noise, { loop: true, dest: bp })); n.bp = bp;
+    synthWhoosh(0.7, 0.35, 150, 1800);                 // ignition
+  }
+  n.humGain.gain.setTargetAtTime(1, t, 0.15);
+  sfx.nodes = n; sfx.blade = true; sfx.lastLevel = 0;
+}
+function bladeOff() {
+  if (!sfx.blade) return;
+  const n = sfx.nodes, ctx = sfx.ctx, t = ctx.currentTime;
+  for (const g of [n.humGain, n.swlGain, n.swhGain]) g.gain.setTargetAtTime(0, t, 0.12);
+  setTimeout(() => { for (const s of n.stops) { try { s.stop(); } catch {} } }, 700);
+  if (sfx.font) { if (sfx.font.out.length) playBuffer(pick(sfx.font.out)); } else synthWhoosh(0.5, 0.4, 1200, 150);
+  sfx.nodes = null; sfx.blade = false;
+}
+function sfxSetLevel(level, dir) {
+  const n = sfx.nodes, t = sfx.ctx.currentTime;
+  n.humGain.gain.setTargetAtTime(1 - 0.5 * level, t, 0.05);
+  if (sfx.font) {
+    n.swhGain.gain.setTargetAtTime(dir >= 0 ? level : 0, t, 0.05);
+    n.swlGain.gain.setTargetAtTime(dir < 0 ? level : 0, t, 0.05);
+  } else {
+    n.swhGain.gain.setTargetAtTime(level * 0.9, t, 0.05);
+    n.bp.frequency.setTargetAtTime(300 + level * 1700, t, 0.05);
+    for (const o of n.oscs) o.detune.setTargetAtTime(dir * level * 150, t, 0.05);   // small doppler-style pitch bend
+  }
+}
+function synthWhoosh(gain, seconds, f0, f1) {
+  const ctx = sfx.ctx, t = ctx.currentTime;
+  const bp = ctx.createBiquadFilter(); bp.type = "bandpass"; bp.Q.value = 1.5;
+  bp.frequency.setValueAtTime(f0, t); bp.frequency.exponentialRampToValueAtTime(f1, t + seconds * 0.6); bp.frequency.exponentialRampToValueAtTime(f0, t + seconds);
+  const g = ctx.createGain(); g.gain.setValueAtTime(0.001, t); g.gain.exponentialRampToValueAtTime(gain, t + seconds * 0.3); g.gain.exponentialRampToValueAtTime(0.001, t + seconds);
+  bp.connect(g); g.connect(sfx.master);
+  playBuffer(sfx.noise, { dest: bp }).stop(t + seconds + 0.05);
+}
+function sfxSwingAccent(level) {
+  if (sfx.font) { if (sfx.font.swing.length) playBuffer(pick(sfx.font.swing), { gain: 0.5 + 0.5 * level, rate: 0.95 + Math.random() * 0.1 }); }
+  else synthWhoosh(0.4 + 0.5 * level, 0.3, 300, 2200);
+}
+function sfxClash() {
+  const ctx = sfx.ctx, t = ctx.currentTime;
+  if (sfx.font) { if (sfx.font.clash.length) playBuffer(pick(sfx.font.clash), { rate: 0.95 + Math.random() * 0.1 }); }
+  else {
+    const hp = ctx.createBiquadFilter(); hp.type = "highpass"; hp.frequency.value = 1800;
+    const g = ctx.createGain(); g.gain.setValueAtTime(1, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.35);
+    hp.connect(g); g.connect(sfx.master);
+    playBuffer(sfx.noise, { dest: hp }).stop(t + 0.4);
+    const o = ctx.createOscillator(); o.type = "square"; o.frequency.setValueAtTime(1400, t); o.frequency.exponentialRampToValueAtTime(300, t + 0.25);
+    const og = ctx.createGain(); og.gain.setValueAtTime(0.35, t); og.gain.exponentialRampToValueAtTime(0.001, t + 0.3);
+    o.connect(og); og.connect(sfx.master); o.start(t); o.stop(t + 0.3);
+  }
+  if (sfx.nodes) { const hg = sfx.nodes.humGain.gain; hg.cancelScheduledValues(t); hg.setValueAtTime(0.15, t); hg.setTargetAtTime(1, t + 0.1, 0.2); }
+}
+// Called every tracked frame: keeps the blade sound in step with the glow and its motion.
+function sfxFrame(sig, now) {
+  if (!S.sfxEnabled || !sfx.unlocked) { if (sfx.blade) bladeOff(); return; }
+  const manual = now < sfx.manualUntil;
+  const lit = glowLit(sig) || manual;
+  if (lit && !sfx.blade) bladeOn();
+  else if (!lit && sfx.blade && now - sm.lastLit > GLOW_LOST_MS) bladeOff();
+  if (!sfx.blade) return;
+  const level = manual ? sfx.manualLevel : swingLevel();
+  sfxSetLevel(level, motion.dir || 1);
+  if (!manual) {
+    if (level > 0.6 && sfx.lastLevel <= 0.6 && now - motion.lastAccent > 300) { motion.lastAccent = now; sfxSwingAccent(level); }
+    const drop = motion.prevSpeed - motion.rawSpeed, minSpeed = 0.6 * S.swingFull * (1.2 - S.clashSens);
+    if (S.clashSens > 0 && motion.prevSpeed > minSpeed && drop > 0.8 * motion.prevSpeed && now - motion.lastClash > 400) { motion.lastClash = now; sfxClash(); log("clash (abrupt stop)"); }
+  }
+  sfx.lastLevel = level;
+}
+const FONT_KINDS = { hum: /^hum\d*$/i, swingl: /^swingl\d*$/i, swingh: /^swingh\d*$/i, swing: /^(swing|swng)\d*$/i, clash: /^(clash|clsh)\d*$/i, in: /^(in|poweron|ignite)\d*$/i, out: /^(out|poweroff|retract)\d*$/i };
+async function loadFont(files, cache) {
+  const ctx = sfxCtx();
+  const font = { hum: [], swingl: [], swingh: [], swing: [], clash: [], in: [], out: [] }, kept = [];
+  for (const f of files) {
+    const base = f.name.replace(/\.[^.]+$/, "");
+    const kind = Object.keys(FONT_KINDS).find((k) => FONT_KINDS[k].test(base));
+    if (!kind) continue;
+    try { font[kind].push(await ctx.decodeAudioData(await f.arrayBuffer())); kept.push(f); }
+    catch (e) { log(`could not decode ${f.name}: ${e.message}`); }
+  }
+  if (!font.hum.length) { toast("No hum file found. A font needs at least hum.wav"); return; }
+  if (sfx.blade) bladeOff();
+  sfx.font = font;
+  sfx.summary = `Sound font: hum ${font.hum.length}, swing ${font.swing.length}, clash ${font.clash.length}, smooth-swing pairs ${Math.min(font.swingl.length, font.swingh.length)}, in ${font.in.length}, out ${font.out.length}.`;
+  log(sfx.summary);
+  if (cache) { try { await idbPut("files", "font", { files: kept.map((f) => ({ name: f.name, blob: f })) }); } catch (e) { log(`font cache failed: ${e.message}`); } }
+  render();
+}
+async function clearFont() {
+  if (sfx.blade) bladeOff();
+  sfx.font = null; sfx.summary = "";
+  try { await idbDelete("files", "font"); } catch {}
+  log("using synthesized sword sounds"); render();
+}
+// Test buttons: hold the blade on for a moment and drive the swing level by hand.
+async function sfxTest(kind) {
+  if (!(await sfxUnlock())) { toast("Audio is blocked"); return; }
+  const now = performance.now();
+  sfx.manualUntil = now + (kind === "hum" ? 3000 : 1500); sfx.manualLevel = 0;
+  bladeOn();
+  if (kind === "swing") {
+    const t0 = now, iv = setInterval(() => {
+      const k = (performance.now() - t0) / 600;
+      sfx.manualLevel = k < 0.4 ? k / 0.4 : Math.max(0, 1 - (k - 0.4) / 0.6);
+      if (sfx.blade) sfxSetLevel(sfx.manualLevel, 1);
+      if (k >= 1) clearInterval(iv);
+    }, 30);
+    setTimeout(() => sfxSwingAccent(1), 150);
+  } else if (kind === "clash") setTimeout(sfxClash, 200);
+  log(`test ${kind}`);
+  setTimeout(() => { if (!(lastSig && glowLit(lastSig))) bladeOff(); }, sfx.manualUntil - now + 200);
+}
+
+// ---------- audio file ----------
+let songURL = null;
+function loadSong(blob, name) {
+  if (songURL) URL.revokeObjectURL(songURL);
+  songURL = URL.createObjectURL(blob);
+  audio.src = songURL;
+  $("songText").textContent = `Loaded: ${name}`;
+}
+audio.addEventListener("loadedmetadata", () => {
+  if (isFinite(audio.duration)) $("songText").textContent += ` (${fmtTime(Math.round(audio.duration))})`;
+  render();
+});
+$("songFile").addEventListener("change", async (e) => {
+  const f = e.target.files[0]; if (!f) return;
+  loadSong(f, f.name);
+  try { await idbPut("files", "song", { name: f.name, blob: f }); log(`song cached: ${f.name}`); } catch (err) { log(`song cache failed: ${err.message}`); }
+  if (armed) { armed = false; renderArmed(); toast("Song changed. Tap Arm again."); }
+});
+
+// ---------- wake lock ----------
+async function requestWakeLock() {
+  if (!("wakeLock" in navigator)) { $("bWake").textContent = "wake: unsupported"; return; }
+  try {
+    wakeLock = await navigator.wakeLock.request("screen");
+    $("bWake").textContent = "wake: on";
+    wakeLock.addEventListener("release", () => { $("bWake").textContent = "wake: released"; });
+  } catch (e) { $("bWake").textContent = "wake: failed"; log(`wake lock failed: ${e.message}`); }
+}
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") requestWakeLock(); });
+
+// ---------- overlay drawing ----------
+function draw(sig) {
+  const W = overlay.width, H = overlay.height;
+  octx.clearRect(0, 0, W, H);
+  const fs = Math.max(12, Math.round(W / 36));
+  octx.font = `${fs}px system-ui, sans-serif`; octx.lineWidth = Math.max(2, W / 320);
+
+  if (S.mode === "pose" && S.zone) {
+    const z = S.zone, active = sm.state === "GRABBED" || sm.state === "RAISED";
+    octx.strokeStyle = active ? "#2dc653" : "#f4a261"; octx.fillStyle = active ? "rgba(45,198,83,.18)" : "rgba(244,162,97,.12)";
+    octx.fillRect(z.x * W, z.y * H, z.w * W, z.h * H); octx.strokeRect(z.x * W, z.y * H, z.w * W, z.h * H);
+    octx.fillStyle = octx.strokeStyle; octx.fillText("RACK", z.x * W + 4, z.y * H + fs);
+  }
+  if (drag) {
+    const r = normRect(drag);
+    octx.strokeStyle = "#fff"; octx.setLineDash([6, 4]); octx.strokeRect(r.x * W, r.y * H, r.w * W, r.h * H); octx.setLineDash([]);
+  }
+  if (S.mode === "lit") {
+    const y = sig.raiseY * H;
+    octx.strokeStyle = sig.raiseFrom === "shoulders" ? "rgba(142,202,230,.9)" : "rgba(255,255,255,.5)";
+    octx.setLineDash([10, 8]); octx.beginPath(); octx.moveTo(0, y); octx.lineTo(W, y); octx.stroke(); octx.setLineDash([]);
+    octx.fillStyle = octx.strokeStyle; octx.fillText(`raise line (${sig.raiseFrom})`, 6, y - 4);
+    if (sig.glow && sig.glow.count) {
+      const g = sig.glow, lit = glowLit(sig);
+      octx.strokeStyle = lit ? (glowRaised(sig) ? "#2dc653" : "#ffd166") : "rgba(255,255,255,.35)";
+      octx.strokeRect(g.box.x * W, g.box.y * H, g.box.w * W, g.box.h * H);
+      octx.beginPath(); octx.arc(g.cx * W, g.cy * H, fs / 2, 0, Math.PI * 2); octx.stroke();
+      let label = `${g.count}px`;
+      if (S.litGesture === "sequence") {
+        // Long axis of the glow, coloured by whether it reads as upright or sideways.
+        const pose = glowPose(sig), a = (g.angle * Math.PI) / 180, len = Math.max(fs * 2, g.axisLen * W);
+        octx.strokeStyle = pose === "upright" ? "#2dc653" : pose === "sideways" ? "#8ecae6" : "rgba(255,255,255,.5)";
+        octx.lineWidth = Math.max(3, W / 200);
+        octx.beginPath(); octx.moveTo(g.cx * W - Math.cos(a) * len, g.cy * H - Math.sin(a) * len); octx.lineTo(g.cx * W + Math.cos(a) * len, g.cy * H + Math.sin(a) * len); octx.stroke();
+        octx.lineWidth = Math.max(2, W / 320);
+        label += lit ? `  ${pose || "too round"}  ${Math.round(Math.abs(g.angle))}°` : "";
+      }
+      octx.fillStyle = octx.strokeStyle; octx.fillText(label, g.box.x * W, g.box.y * H - 4);
+    }
+  }
+  if (S.debug && sig.lm) {
+    drawer.drawConnectors(sig.lm, PoseLandmarker.POSE_CONNECTIONS, { color: "rgba(255,255,255,.55)", lineWidth: Math.max(1, W / 400) });
+    drawer.drawLandmarks(sig.lm, { color: "rgba(255,255,255,.8)", fillColor: "rgba(255,255,255,.5)", lineWidth: 1, radius: Math.max(2, W / 240) });
+    for (const i of [LM.LSHOULDER, LM.RSHOULDER, LM.LWRIST, LM.RWRIST]) {
+      const p = sig.lm[i], ok = p.visibility >= S.visThresh;
+      octx.strokeStyle = ok ? (WRISTS.includes(i) ? "#ffd166" : "#8ecae6") : "#e63946";
+      octx.beginPath(); octx.arc(p.x * W, p.y * H, fs / 2, 0, Math.PI * 2); octx.stroke();
+    }
+  }
+  if (S.debug) {
+    const lines = [`${sm.state}  ${fps.toFixed(0)} fps`];
+    octx.fillStyle = "rgba(0,0,0,.55)"; octx.fillRect(0, 0, fs * 9, fs * 1.6);
+    octx.fillStyle = "#fff"; octx.fillText(lines[0], 6, fs * 1.15);
+  }
+}
+function normRect(d) {
+  const x = Math.min(d.x0, d.x1), y = Math.min(d.y0, d.y1);
+  return { x, y, w: Math.abs(d.x1 - d.x0), h: Math.abs(d.y1 - d.y0) };
+}
+function toNorm(e) {
+  const r = overlay.getBoundingClientRect();
+  return { x: Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)), y: Math.min(1, Math.max(0, (e.clientY - r.top) / r.height)) };
+}
+overlay.addEventListener("pointerdown", (e) => {
+  if (!pickMode) return;
+  e.preventDefault();
+  const p = toNorm(e);
+  if (pickMode === "zone") { drag = { x0: p.x, y0: p.y, x1: p.x, y1: p.y }; overlay.setPointerCapture(e.pointerId); }
+  else if (pickMode === "color") { sampleColor(p); setPickMode(null); }
+});
+overlay.addEventListener("pointermove", (e) => { if (drag) { const p = toNorm(e); drag.x1 = p.x; drag.y1 = p.y; } });
+overlay.addEventListener("pointerup", (e) => {
+  if (!drag) return;
+  const p = toNorm(e); drag.x1 = p.x; drag.y1 = p.y;
+  const z = normRect(drag); drag = null;
+  if (z.w < 0.03 || z.h < 0.03) toast("Zone too small, try again");
+  else { S.zone = z; save(); log(`rack zone set: x${z.x.toFixed(2)} y${z.y.toFixed(2)} w${z.w.toFixed(2)} h${z.h.toFixed(2)}`); }
+  setPickMode(null); render();
+});
+overlay.addEventListener("pointercancel", () => { drag = null; setPickMode(null); });
+function setPickMode(m) {
+  pickMode = m;
+  stage.classList.toggle("pick", !!m);
+  stageHint.hidden = !m;
+  stageHint.textContent = m === "zone" ? "Drag a box over the sword rack" : "Tap the glowing part of the sword";
+}
+function sampleColor(p) {
+  if (!infer.width) { toast("No video frame yet"); return; }
+  const x = Math.round(p.x * infer.width), y = Math.round(p.y * infer.height), r = 3;
+  const x0 = Math.max(0, x - r), y0 = Math.max(0, y - r);
+  const d = ictx.getImageData(x0, y0, Math.min(infer.width - x0, 2 * r + 1), Math.min(infer.height - y0, 2 * r + 1)).data;
+  let rs = 0, gs = 0, bs = 0, n = d.length / 4;
+  for (let i = 0; i < d.length; i += 4) { rs += d[i]; gs += d[i + 1]; bs += d[i + 2]; }
+  S.swordColor = { r: Math.round(rs / n), g: Math.round(gs / n), b: Math.round(bs / n) };
+  save(); render();
+  log(`sword color sampled: rgb(${S.swordColor.r},${S.swordColor.g},${S.swordColor.b})`);
+}
+
+// ---------- UI binding ----------
+function renderLive(sig) {
+  $("bFps").textContent = `track ${trackFps.toFixed(0)} / pose ${fps.toFixed(0)} fps`;
+  const lm = sig.lm, f = (p) => `${p.x.toFixed(2)},${p.y.toFixed(2)} v${p.visibility.toFixed(2)}`;
+  const parts = [];
+  if (lm) parts.push(`L wrist ${f(lm[15])}  R wrist ${f(lm[16])}`, `L shoulder ${f(lm[11])}  R shoulder ${f(lm[12])}`);
+  else parts.push("no pose");
+  if (S.mode === "lit") {
+    const g = sig.glow;
+    if (!g) parts.push("glow: pick a sword color first");
+    else if (!g.count) parts.push(`glow 0px (need ${S.minGlowPx})`);
+    else if (S.litGesture === "sequence") parts.push(`glow ${g.count}px (need ${S.minGlowPx})  angle ${Math.round(Math.abs(g.angle))}° (0=sideways, 90=upright)  elongation ${g.elong.toFixed(1)}× (need ${S.minElong})  → ${glowPose(sig) || (glowLit(sig) ? "too round" : "not lit")}`);
+    else parts.push(`glow ${g.count}px (need ${S.minGlowPx}) top ${g.top.toFixed(2)} vs line ${sig.raiseY.toFixed(2)}`);
+    if (sm.state === "TURN") parts.push(`upright done, turn sideways within ${Math.max(0, ((sm.windowStart + S.poseWindowMs - performance.now()) / 1000)).toFixed(1)} s`);
+    if (g && g.count && glowLit(sig)) parts.push(`motion: speed ${motion.speed.toFixed(2)} W/s (full at ${S.swingFull})  turn ${motion.turn.toFixed(0)}°/s (full at ${S.turnFull})  swing level ${(swingLevel() * 100).toFixed(0)}%${sfx.blade ? "  🔊" : ""}`);
+  }
+  if (sm.state === "COOLDOWN") parts.push(`cooldown ${Math.max(0, Math.ceil((sm.cooldownUntil - performance.now()) / 1000))}s`);
+  if (sm.state === "DUEL") parts.push(`duel ${Math.round((performance.now() - sm.triggerTime) / 1000)}s${sm.vicStart ? " · victory raise…" : sm.loweredSinceTrigger ? "" : " · waiting for sword to come down"}`);
+  $("live").textContent = parts.join("\n");
+}
+function renderArmed() {
+  $("armBtn").textContent = armed ? "Disarm" : "Arm";
+  $("armBtn").classList.toggle("armed", armed); $("armBtn").classList.toggle("primary", !armed);
+  $("bArmed").textContent = armed ? "ARMED" : "disarmed"; $("bArmed").classList.toggle("on", armed);
+}
+const FMT = {
+  colorTol: (v) => `${v}`, minGlowPx: (v) => `${v} px`, raiseLine: (v) => `${Math.round(v * 100)}% from top`,
+  grabWindowMs: (v) => `${(v / 1000).toFixed(1)} s`, raiseHoldMs: (v) => `${v} ms`, visThresh: (v) => v.toFixed(2),
+  cooldownS: (v) => v >= 60 ? `${(v / 60).toFixed(1)} min` : `${v} s`, victoryHoldMs: (v) => `${(v / 1000).toFixed(2)} s`,
+  minDuelS: (v) => `${v} s`, maxDuelMin: (v) => `${v} min`, fadeS: (v) => v ? `${v.toFixed(2)} s` : "no fade",
+  angleTolDeg: (v) => `±${v}°`, minElong: (v) => `${v.toFixed(1)}×`, poseWindowMs: (v) => `${(v / 1000).toFixed(1)} s`,
+  sfxVolume: (v) => `${Math.round(v * 100)}%`, swingFull: (v) => `${v.toFixed(1)} W/s`, turnFull: (v) => `${v}°/s`, clashSens: (v) => v ? `${Math.round(v * 100)}%` : "off",
+};
+$("sfxVolume").addEventListener("input", () => { if (sfx.master) sfx.master.gain.setTargetAtTime(S.sfxVolume, sfx.ctx.currentTime, 0.02); });
+$("fontFiles").addEventListener("change", (e) => { if (e.target.files.length) loadFont(Array.from(e.target.files), true); });
+$("clearFontBtn").onclick = clearFont;
+$("testSwingBtn").onclick = () => sfxTest("swing");
+$("testClashBtn").onclick = () => sfxTest("clash");
+$("testHumBtn").onclick = () => sfxTest("hum");
+$("litGesture").value = S.litGesture;
+$("litGesture").addEventListener("change", () => { S.litGesture = $("litGesture").value; save(); resetState(); render(); });
+for (const key of Object.keys(FMT)) {
+  const el = $(key);
+  el.value = S[key];
+  $("v_" + key).textContent = FMT[key](S[key]);
+  el.addEventListener("input", () => { S[key] = parseFloat(el.value); $("v_" + key).textContent = FMT[key](S[key]); save(); });
+}
+$("victoryAction").value = S.victoryAction;
+$("victoryAction").addEventListener("change", () => { S.victoryAction = $("victoryAction").value; save(); render(); });
+function bindTimeInput(id, key, label) {
+  const el = $(id);
+  el.value = S[key] == null ? "" : fmtTime(S[key]);
+  el.addEventListener("change", () => {
+    const t = parseTime(el.value);
+    if (Number.isNaN(t) || t < 0) { toast("Enter a time like 4:05 or 245"); el.value = S[key] == null ? "" : fmtTime(S[key]); return; }
+    S[key] = t; save(); render();
+    log(`${label} set to ${t == null ? "nothing" : fmtTime(t)}`);
+  });
+}
+bindTimeInput("victoryPoint", "victoryPointS", "victory point");
+bindTimeInput("loopStart", "loopStartS", "loop start");
+$("loopEnabled").checked = S.loopEnabled;
+$("loopEnabled").addEventListener("change", () => { S.loopEnabled = $("loopEnabled").checked; save(); if (!S.loopEnabled) looping = false; });
+$("previewVictoryBtn").onclick = () => {
+  if (S.victoryPointS == null) { toast("Set a victory point first"); return; }
+  looping = false; seekWithFade(S.victoryPointS, "preview victory");
+};
+$("previewLoopBtn").onclick = () => {
+  if (S.victoryPointS == null || S.loopStartS == null) { toast("Set the victory point and loop start first"); return; }
+  if (S.loopStartS >= S.victoryPointS) { toast("Loop start must be before the victory point"); return; }
+  looping = true; seekWithFade(Math.max(0, S.victoryPointS - 5), "preview loop");
+};
+for (const key of ["recordEnabled", "testMode", "debug", "sfxEnabled"]) {
+  const el = $(key); el.checked = S[key];
+  el.addEventListener("change", () => { S[key] = el.checked; save(); render(); });
+}
+$("recordAudio").checked = S.recordAudio;
+$("recordAudio").addEventListener("change", () => { S.recordAudio = $("recordAudio").checked; save(); if (S.source !== "file") startSource(); });
+$("mode").value = S.mode;
+$("mode").addEventListener("change", () => { S.mode = $("mode").value; save(); resetState(); render(); });
+$("source").value = S.source;
+$("source").addEventListener("change", () => { S.source = $("source").value; save(); render(); startSource(); });
+$("videoFile").addEventListener("change", (e) => {
+  const f = e.target.files[0]; if (!f) return;
+  if (fileURL) URL.revokeObjectURL(fileURL);
+  fileURL = URL.createObjectURL(f); log(`test video: ${f.name}`); startSource();
+});
+$("topic").value = S.topic;
+$("topic").addEventListener("input", () => { S.topic = $("topic").value; save(); });
+$("testNotifyBtn").onclick = () => notify("⚔️ Test notification", "The Sword Duel Alarm can reach you.", 3);
+$("pickColorBtn").onclick = () => setPickMode(pickMode === "color" ? null : "color");
+$("zoneBtn").onclick = () => setPickMode(pickMode === "zone" ? null : "zone");
+$("clearZoneBtn").onclick = () => { S.zone = null; save(); render(); };
+$("resetBtn").onclick = () => { resetState(); toast("State reset"); };
+$("clearLogBtn").onclick = () => { logLines.length = 0; $("log").textContent = ""; };
+$("stopBtn").onclick = () => { stopSong(); log("music stopped by user"); };
+$("camBtn").onclick = () => startSource();
+$("testTriggerBtn").onclick = () => { if (sm.state !== "IDLE") { sm.cooldownUntil = 0; setState("IDLE"); } trigger("test button"); };
+$("testVictoryBtn").onclick = () => {
+  if (sm.state !== "DUEL" && sm.state !== "TRIGGERED") { toast("Victory only counts during a duel. Tap Test trigger first."); return; }
+  victory();
+};
+$("armBtn").onclick = async () => {
+  if (armed) { armed = false; renderArmed(); log("disarmed"); return; }
+  if (S.mode === "pose" && !S.zone) { toast("Set the rack zone first"); return; }
+  if (S.mode === "lit" && !S.swordColor) { toast("Pick the sword color first"); return; }
+  if (audio.src) {
+    try { await audio.play(); audio.pause(); audio.currentTime = 0; log("audio unlocked"); }
+    catch (e) { toast(`Audio unlock failed: ${e.message}`); log(`audio unlock failed: ${e.message}`); return; }
+  } else toast("No song loaded: notifications and recording only");
+  armed = true; renderArmed(); requestWakeLock(); sfxUnlock();
+  if (sm.state === "COOLDOWN") { sm.cooldownUntil = 0; setState("IDLE"); }
+  log(`armed (${S.mode} mode)`);
+};
+function render() {
+  renderArmed();
+  $("litPanel").hidden = S.mode !== "lit"; $("posePanel").hidden = S.mode !== "pose";
+  $("sequencePanel").hidden = S.litGesture !== "sequence";
+  $("sfxStatus").textContent = sfx.font ? sfx.summary : "Synthesized sounds (no sound font loaded).";
+  $("videoFile").hidden = S.source !== "file";
+  $("bTest").hidden = !S.testMode;
+  $("victoryPointPanel").hidden = S.victoryAction !== "jump";
+  const dur = audio.duration && isFinite(audio.duration) ? ` of ${fmtTime(Math.round(audio.duration))}` : "";
+  $("v_victoryPoint").textContent = S.victoryPointS == null ? "not set" : fmtTime(S.victoryPointS) + dur;
+  $("v_loopStart").textContent = S.loopStartS == null ? "not set" : fmtTime(S.loopStartS);
+  if (S.victoryPointS != null && audio.duration && isFinite(audio.duration) && S.victoryPointS > audio.duration) $("v_victoryPoint").textContent += " (past the end of this song!)";
+  $("zoneText").textContent = S.zone ? `Rack zone set (${Math.round(S.zone.w * 100)}% × ${Math.round(S.zone.h * 100)}% of frame).` : "No rack zone set. Tap \"Set rack zone\", then drag a box over the sword rack.";
+  if (S.swordColor) { const c = S.swordColor; $("swatch").style.background = `rgb(${c.r},${c.g},${c.b})`; $("colorText").textContent = `rgb(${c.r}, ${c.g}, ${c.b})`; }
+  else { $("swatch").style.background = "transparent"; $("colorText").textContent = "no color yet"; }
+}
+
+// ---------- boot ----------
+(async function boot() {
+  if (!window.isSecureContext) $("httpsBanner").hidden = false;
+  render();
+  log(`settings loaded; ntfy topic "${S.topic}"`);
+  try { const song = await idbGet("files", "song"); if (song) { loadSong(song.blob, song.name); log(`song restored: ${song.name}`); } }
+  catch (e) { log(`song restore failed: ${e.message}`); }
+  renderRecordings();
+  requestWakeLock();
+  scheduleFrame();
+  try { const font = await idbGet("files", "font"); if (font) await loadFont(font.files, false); } catch (e) { log(`sound font restore failed: ${e.message}`); }
+  const [modelErr] = await Promise.all([initModel().catch((e) => e), startSource()]);
+  if (modelErr) { toast(modelErr.message); log(modelErr.message); }
+})();
+</script>
+</body>
+</html>
