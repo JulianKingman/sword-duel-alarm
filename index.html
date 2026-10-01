@@ -181,8 +181,9 @@
     </div>
     <label class="field"><span class="name">Speed for a full swing sound (frame widths per second) <b id="v_swingFull"></b></span><input type="range" id="swingFull" min="0.3" max="4" step="0.1"></label>
     <label class="field"><span class="name">Turn rate for a full swing sound (degrees per second) <b id="v_turnFull"></b></span><input type="range" id="turnFull" min="100" max="1200" step="50"></label>
-    <label class="field"><span class="name">Clash sensitivity (how abrupt a stop must be) <b id="v_clashSens"></b></span><input type="range" id="clashSens" min="0" max="1" step="0.05"></label>
-    <p class="hint">Swing sound follows how fast the lit sword moves and turns. A clash plays when a fast-moving sword stops abruptly (experimental until two swords can be told apart). Sounds start after Arm or any test button, which is what unlocks audio.</p>
+    <label class="toggle">Clash when the two swords meet <input type="checkbox" id="clashContact"></label>
+    <label class="field"><span class="name">Also clash on an abrupt stop (sensitivity) <b id="v_clashSens"></b></span><input type="range" id="clashSens" min="0" max="1" step="0.05"></label>
+    <p class="hint">Swing sound follows how fast each lit sword moves and turns. The two swords are tracked as separate glowing blobs; a clash plays the moment they merge into one while moving. Sounds start after Arm or any test button, which is what unlocks audio.</p>
   </section>
 
   <section>
@@ -252,7 +253,7 @@ const DEFAULTS = {
   mode: "lit", zone: null,
   swordColor: null, colorTol: 70, minGlowPx: 60, raiseLine: 0.4,
   litGesture: "sequence", angleTolDeg: 25, minElong: 3, poseWindowMs: 3000,
-  sfxEnabled: true, sfxVolume: 0.8, swingFull: 1.5, turnFull: 500, clashSens: 0.5,
+  sfxEnabled: true, sfxVolume: 0.8, swingFull: 1.5, turnFull: 500, clashSens: 0.5, clashContact: true,
   grabWindowMs: 3000, raiseHoldMs: 500, visThresh: 0.6, cooldownS: 120,
   victoryHoldMs: 2000, minDuelS: 30, maxDuelMin: 10, victoryAction: "jump", victoryPointS: 245, loopEnabled: true, loopStartS: 15, fadeS: 1,
   topic: null, recordEnabled: true, recordAudio: false,
@@ -431,29 +432,51 @@ function frame(now) {
 }
 
 // ---------- motion of the glow (speed in frame widths per second, turn rate in degrees per second) ----------
-const motion = { prev: null, speed: 0, turn: 0, dir: 0, rawSpeed: 0, prevSpeed: 0, lastAccent: 0, lastClash: 0 };
+// Each sword blob gets a track that carries its speed and turn rate from frame to frame. `motion` itself mirrors the
+// fastest track, which drives the shared swing sound and the readout. `contact` is set on the frame two tracked swords merge.
+const motion = { tracks: [], nextId: 0, contact: false, speed: 0, turn: 0, dir: 0, rawSpeed: 0, prevSpeed: 0, lastAccent: 0, lastClash: 0 };
 function trackMotion(sig, now) {
-  const g = sig.glow;
-  if (!glowLit(sig)) { motion.prev = null; motion.speed = motion.turn = motion.rawSpeed = motion.prevSpeed = 0; return; }
-  const p = motion.prev;
-  motion.prevSpeed = motion.rawSpeed;
-  if (p && now > p.t) {
-    const dt = (now - p.t) / 1000;
-    const dx = g.cx - p.cx, dy = (g.cy - p.cy) * (infer.height / infer.width);
-    let da = g.angle - p.angle; if (da > 90) da -= 180; if (da < -90) da += 180;   // a line is the same at +90 and -90
-    const speed = Math.hypot(dx, dy) / dt, turn = da / dt;
-    if (speed < 8) {                                   // a jump of more than ~8 widths/s is a tracking glitch, not a swing
-      motion.rawSpeed = speed;
-      motion.speed = motion.speed * 0.5 + speed * 0.5;
-      motion.turn = motion.turn * 0.5 + Math.abs(turn) * 0.5;
-      if (Math.abs(turn) > 60) motion.dir = Math.sign(turn);
+  const blobs = glowLit(sig) ? sig.glow.blobs : [];
+  const prev = motion.tracks, next = [], used = new Set(), ar = infer.height / infer.width;
+  for (const b of blobs) {
+    let best = null, bd = 0.35;                                   // no match further than 0.35 frame widths away
+    for (const t of prev) {
+      if (used.has(t)) continue;
+      const d = Math.hypot(b.cx - t.cx, (b.cy - t.cy) * ar);
+      if (d < bd) { bd = d; best = t; }
     }
+    const tr = best || { id: ++motion.nextId, speed: 0, turn: 0, dir: 0, rawSpeed: 0, prevSpeed: 0, t: now };
+    if (best) {
+      used.add(best);
+      const dt = (now - best.t) / 1000;
+      if (dt > 0) {
+        const dx = b.cx - best.cx, dy = (b.cy - best.cy) * ar;
+        let da = b.angle - best.angle; if (da > 90) da -= 180; if (da < -90) da += 180;   // a line is the same at +90 and -90
+        const speed = Math.hypot(dx, dy) / dt, turn = da / dt;
+        if (speed < 8) {                                           // a jump above ~8 widths/s is a tracking glitch, not a swing
+          tr.prevSpeed = tr.rawSpeed; tr.rawSpeed = speed;
+          tr.speed = tr.speed * 0.5 + speed * 0.5;
+          tr.turn = tr.turn * 0.5 + Math.abs(turn) * 0.5;
+          if (Math.abs(turn) > 60) tr.dir = Math.sign(turn);
+        }
+      }
+    }
+    Object.assign(tr, { cx: b.cx, cy: b.cy, angle: b.angle, count: b.count, t: now });
+    next.push(tr);
   }
-  motion.prev = { cx: g.cx, cy: g.cy, angle: g.angle, t: now };
+  // Contact: two tracked swords became one blob of about their combined size while at least one was moving.
+  motion.contact = false;
+  if (S.clashContact && prev.length === 2 && next.length === 1) {
+    const sum = prev[0].count + prev[1].count, fastest = Math.max(prev[0].speed, prev[1].speed);
+    if (next[0].count >= 0.6 * sum && fastest > 0.25 * S.swingFull) motion.contact = true;
+  }
+  motion.tracks = next;
+  const lead = next.reduce((a, t) => (!a || levelOf(t) > levelOf(a) ? t : a), null);
+  if (lead) { motion.speed = lead.speed; motion.turn = lead.turn; motion.dir = lead.dir; motion.rawSpeed = lead.rawSpeed; motion.prevSpeed = lead.prevSpeed; }
+  else { motion.speed = motion.turn = motion.rawSpeed = motion.prevSpeed = motion.dir = 0; }
 }
-function swingLevel() {
-  return Math.min(1, Math.max(motion.speed / S.swingFull, motion.turn / S.turnFull));
-}
+function levelOf(t) { return Math.min(1, Math.max(t.speed / S.swingFull, t.turn / S.turnFull)); }
+function swingLevel() { return motion.tracks.length ? Math.max(...motion.tracks.map(levelOf)) : 0; }
 function smooth(frames) {
   const n = frames.length, out = [];
   for (let i = 0; i < 33; i++) {
@@ -475,36 +498,66 @@ function analyze(lm) {
   if (S.mode === "lit" && S.swordColor) sig.glow = findGlow();
   return sig;
 }
-// Scan the downscaled frame for pixels close to the sampled sword color.
+// Scan the downscaled frame for pixels close to the sampled sword color, then split them into separate blobs
+// (connected groups) so two same-colored swords are tracked apart. Returns the largest blob, with `blobs` = up to two
+// blobs big enough to be a sword, largest first.
+const scratch = { w: 0, h: 0, mask: null, cells: null, labels: null, stack: null };
 function findGlow() {
-  const w = infer.width, h = infer.height;
+  const w = infer.width, h = infer.height, cw = w >> 1, ch = h >> 1;
+  if (scratch.w !== w || scratch.h !== h) {
+    Object.assign(scratch, { w, h, mask: new Uint8Array(w * h), cells: new Uint8Array(cw * ch), labels: new Int32Array(cw * ch), stack: new Int32Array(cw * ch) });
+  }
+  const { mask, cells, labels, stack } = scratch;
+  cells.fill(0); labels.fill(0);
   const img = ictx.getImageData(0, 0, w, h).data;
   const { r, g, b } = S.swordColor, tol2 = S.colorTol * S.colorTol;
-  let count = 0, sx = 0, sy = 0, sxx = 0, syy = 0, sxy = 0, top = -1;
-  let minX = w, maxX = 0, maxY = 0;
-  for (let y = 0; y < h; y++) {
-    let rowHits = 0;
-    for (let x = 0; x < w; x++) {
-      const i = (y * w + x) * 4;
-      const dr = img[i] - r, dg = img[i + 1] - g, db = img[i + 2] - b;
-      if (dr * dr + dg * dg + db * db <= tol2) {
-        count++; sx += x; sy += y; sxx += x * x; syy += y * y; sxy += x * y; rowHits++;
-        if (x < minX) minX = x; if (x > maxX) maxX = x; maxY = y;
+  let total = 0;
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const i = (y * w + x) * 4, dr = img[i] - r, dg = img[i + 1] - g, db = img[i + 2] - b;
+    const m = dr * dr + dg * dg + db * db <= tol2 ? 1 : 0;
+    mask[y * w + x] = m;
+    if (m) { cells[(y >> 1) * cw + (x >> 1)] = 1; total++; }
+  }
+  if (!total) { orientHistory.length = 0; return { count: 0, total: 0, blobs: [] }; }
+  // Label connected groups on a half-resolution grid (8-connected), which also bridges 1-pixel gaps.
+  const comps = [];
+  for (let c = 0; c < cells.length; c++) {
+    if (!cells[c] || labels[c]) continue;
+    const id = comps.length + 1; let sp = 0; stack[sp++] = c; labels[c] = id;
+    while (sp) {
+      const k = stack[--sp], kx = k % cw, ky = (k - kx) / cw;
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+        const nx = kx + dx, ny = ky + dy;
+        if (nx < 0 || ny < 0 || nx >= cw || ny >= ch) continue;
+        const n = ny * cw + nx;
+        if (cells[n] && !labels[n]) { labels[n] = id; stack[sp++] = n; }
       }
     }
-    if (top < 0 && rowHits >= 2) top = y;   // first row with at least 2 hits, to ignore lone noisy pixels
+    comps.push({ count: 0, sx: 0, sy: 0, sxx: 0, syy: 0, sxy: 0, minX: w, maxX: 0, minY: h, maxY: 0 });
   }
-  if (!count) { orientHistory.length = 0; return { count: 0 }; }
-  // Orientation of the glow from its pixel spread (principal axis). angle: 0 = sideways, ±90 = upright.
-  const mx = sx / count, my = sy / count;
-  const vx = sxx / count - mx * mx, vy = syy / count - my * my, cxy = sxy / count - mx * my;
+  // Pixel-precise sums per group.
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    if (!mask[y * w + x]) continue;
+    const c = comps[labels[(y >> 1) * cw + (x >> 1)] - 1];
+    c.count++; c.sx += x; c.sy += y; c.sxx += x * x; c.syy += y * y; c.sxy += x * y;
+    if (x < c.minX) c.minX = x; if (x > c.maxX) c.maxX = x; if (y < c.minY) c.minY = y; if (y > c.maxY) c.maxY = y;
+  }
+  comps.sort((a, b) => b.count - a.count);
+  const blobs = comps.filter((c) => c.count >= S.minGlowPx).slice(0, 2).map((c) => blobStats(c, w, h));
+  const primary = blobs[0] || blobStats(comps[0], w, h);
+  const o = smoothOrientation(primary.rawAngle, primary.rawElong);
+  primary.angle = o.angle; primary.elong = o.elong; primary.total = total; primary.blobs = blobs;
+  return primary;
+}
+// Orientation of a blob from its pixel spread (principal axis). angle: 0 = sideways, ±90 = upright.
+function blobStats(c, w, h) {
+  const n = c.count, mx = c.sx / n, my = c.sy / n;
+  const vx = c.sxx / n - mx * mx, vy = c.syy / n - my * my, cxy = c.sxy / n - mx * my;
   const rawAngle = (0.5 * Math.atan2(2 * cxy, vx - vy)) * 180 / Math.PI;
   const tr = vx + vy, disc = Math.sqrt(Math.max(0, (tr * tr) / 4 - (vx * vy - cxy * cxy)));
   const rawElong = Math.sqrt((tr / 2 + disc) / Math.max(tr / 2 - disc, 1e-6));
-  const o = smoothOrientation(rawAngle, rawElong);
-  const topY = top < 0 ? maxY : top;
-  return { count, cx: mx / w, cy: my / h, top: topY / h, angle: o.angle, elong: o.elong, axisLen: Math.sqrt(tr / 2 + disc) * 2 / w,
-    box: { x: minX / w, y: topY / h, w: (maxX - minX + 1) / w, h: (maxY - topY + 1) / h } };
+  return { count: n, cx: mx / w, cy: my / h, top: c.minY / h, angle: rawAngle, elong: rawElong, rawAngle, rawElong, axisLen: Math.sqrt(tr / 2 + disc) * 2 / w,
+    box: { x: c.minX / w, y: c.minY / h, w: (c.maxX - c.minX + 1) / w, h: (c.maxY - c.minY + 1) / h } };
 }
 // Average the last few orientations. Angles are doubled before averaging so that +89° and -89° (the same line) agree.
 const orientHistory = [];
@@ -985,8 +1038,12 @@ function sfxFrame(sig, now) {
   sfxSetLevel(level, motion.dir || 1);
   if (!manual) {
     if (level > 0.6 && sfx.lastLevel <= 0.6 && now - motion.lastAccent > 300) { motion.lastAccent = now; sfxSwingAccent(level); }
-    const drop = motion.prevSpeed - motion.rawSpeed, minSpeed = 0.6 * S.swingFull * (1.2 - S.clashSens);
-    if (S.clashSens > 0 && motion.prevSpeed > minSpeed && drop > 0.8 * motion.prevSpeed && now - motion.lastClash > 400) { motion.lastClash = now; sfxClash(); log("clash (abrupt stop)"); }
+    if (motion.contact && now - motion.lastClash > 400) { motion.lastClash = now; sfxClash(); log("clash (swords met)"); }
+    const minSpeed = 0.6 * S.swingFull * (1.2 - S.clashSens);
+    for (const t of motion.tracks) {
+      const drop = t.prevSpeed - t.rawSpeed;
+      if (S.clashSens > 0 && t.prevSpeed > minSpeed && drop > 0.8 * t.prevSpeed && now - motion.lastClash > 400) { motion.lastClash = now; sfxClash(); log("clash (abrupt stop)"); }
+    }
   }
   sfx.lastLevel = level;
 }
@@ -1087,21 +1144,24 @@ function draw(sig) {
     octx.setLineDash([10, 8]); octx.beginPath(); octx.moveTo(0, y); octx.lineTo(W, y); octx.stroke(); octx.setLineDash([]);
     octx.fillStyle = octx.strokeStyle; octx.fillText(`raise line (${sig.raiseFrom})`, 6, y - 4);
     if (sig.glow && sig.glow.count) {
-      const g = sig.glow, lit = glowLit(sig);
-      octx.strokeStyle = lit ? (glowRaised(sig) ? "#2dc653" : "#ffd166") : "rgba(255,255,255,.35)";
-      octx.strokeRect(g.box.x * W, g.box.y * H, g.box.w * W, g.box.h * H);
-      octx.beginPath(); octx.arc(g.cx * W, g.cy * H, fs / 2, 0, Math.PI * 2); octx.stroke();
-      let label = `${g.count}px`;
-      if (S.litGesture === "sequence") {
-        // Long axis of the glow, coloured by whether it reads as upright or sideways.
-        const pose = glowPose(sig), a = (g.angle * Math.PI) / 180, len = Math.max(fs * 2, g.axisLen * W);
-        octx.strokeStyle = pose === "upright" ? "#2dc653" : pose === "sideways" ? "#8ecae6" : "rgba(255,255,255,.5)";
-        octx.lineWidth = Math.max(3, W / 200);
-        octx.beginPath(); octx.moveTo(g.cx * W - Math.cos(a) * len, g.cy * H - Math.sin(a) * len); octx.lineTo(g.cx * W + Math.cos(a) * len, g.cy * H + Math.sin(a) * len); octx.stroke();
-        octx.lineWidth = Math.max(2, W / 320);
-        label += lit ? `  ${pose || "too round"}  ${Math.round(Math.abs(g.angle))}°` : "";
-      }
-      octx.fillStyle = octx.strokeStyle; octx.fillText(label, g.box.x * W, g.box.y * H - 4);
+      const list = sig.glow.blobs.length ? sig.glow.blobs : [sig.glow];
+      list.forEach((g, i) => {
+        const main = i === 0, lit = main ? glowLit(sig) : true;
+        octx.strokeStyle = !lit ? "rgba(255,255,255,.35)" : main ? (glowRaised(sig) ? "#2dc653" : "#ffd166") : "#f4a261";
+        octx.strokeRect(g.box.x * W, g.box.y * H, g.box.w * W, g.box.h * H);
+        octx.beginPath(); octx.arc(g.cx * W, g.cy * H, fs / 2, 0, Math.PI * 2); octx.stroke();
+        let label = `${main ? "" : "#2 "}${g.count}px`;
+        if (S.litGesture === "sequence") {
+          // Long axis of the glow; for the main sword, coloured by whether it reads as upright or sideways.
+          const pose = main ? glowPose(sig) : null, a = (g.angle * Math.PI) / 180, len = Math.max(fs * 2, g.axisLen * W);
+          octx.strokeStyle = !main ? "#f4a261" : pose === "upright" ? "#2dc653" : pose === "sideways" ? "#8ecae6" : "rgba(255,255,255,.5)";
+          octx.lineWidth = Math.max(3, W / 200);
+          octx.beginPath(); octx.moveTo(g.cx * W - Math.cos(a) * len, g.cy * H - Math.sin(a) * len); octx.lineTo(g.cx * W + Math.cos(a) * len, g.cy * H + Math.sin(a) * len); octx.stroke();
+          octx.lineWidth = Math.max(2, W / 320);
+          if (main && lit) label += `  ${pose || "too round"}  ${Math.round(Math.abs(g.angle))}°`;
+        }
+        octx.fillStyle = octx.strokeStyle; octx.fillText(label, g.box.x * W, g.box.y * H - 4);
+      });
     }
   }
   if (S.debug && sig.lm) {
@@ -1176,7 +1236,10 @@ function renderLive(sig) {
     else if (S.litGesture === "sequence") parts.push(`glow ${g.count}px (need ${S.minGlowPx})  angle ${Math.round(Math.abs(g.angle))}° (0=sideways, 90=upright)  elongation ${g.elong.toFixed(1)}× (need ${S.minElong})  → ${glowPose(sig) || (glowLit(sig) ? "too round" : "not lit")}`);
     else parts.push(`glow ${g.count}px (need ${S.minGlowPx}) top ${g.top.toFixed(2)} vs line ${sig.raiseY.toFixed(2)}`);
     if (sm.state === "TURN") parts.push(`upright done, turn sideways within ${Math.max(0, ((sm.windowStart + S.poseWindowMs - performance.now()) / 1000)).toFixed(1)} s`);
-    if (g && g.count && glowLit(sig)) parts.push(`motion: speed ${motion.speed.toFixed(2)} W/s (full at ${S.swingFull})  turn ${motion.turn.toFixed(0)}°/s (full at ${S.turnFull})  swing level ${(swingLevel() * 100).toFixed(0)}%${sfx.blade ? "  🔊" : ""}`);
+    if (g && g.count && glowLit(sig)) {
+      parts.push(`swords in view: ${g.blobs.length}${g.total > g.count ? ` (largest ${g.count} of ${g.total} matching px)` : ""}`);
+      parts.push(`motion: ${motion.tracks.map((t) => `#${t.id} ${t.speed.toFixed(2)} W/s ${t.turn.toFixed(0)}°/s`).join("  ")}  (full at ${S.swingFull} W/s, ${S.turnFull}°/s)  swing level ${(swingLevel() * 100).toFixed(0)}%${sfx.blade ? "  🔊" : ""}`);
+    }
   }
   if (sm.state === "COOLDOWN") parts.push(`cooldown ${Math.max(0, Math.ceil((sm.cooldownUntil - performance.now()) / 1000))}s`);
   if (sm.state === "DUEL") parts.push(`duel ${Math.round((performance.now() - sm.triggerTime) / 1000)}s${sm.vicStart ? " · victory raise…" : sm.loweredSinceTrigger ? "" : " · waiting for sword to come down"}`);
@@ -1234,7 +1297,7 @@ $("previewLoopBtn").onclick = () => {
   if (S.loopStartS >= S.victoryPointS) { toast("Loop start must be before the victory point"); return; }
   looping = true; seekWithFade(Math.max(0, S.victoryPointS - 5), "preview loop");
 };
-for (const key of ["recordEnabled", "testMode", "debug", "sfxEnabled"]) {
+for (const key of ["recordEnabled", "testMode", "debug", "sfxEnabled", "clashContact"]) {
   const el = $(key); el.checked = S[key];
   el.addEventListener("change", () => { S[key] = el.checked; save(); render(); });
 }
