@@ -49,8 +49,11 @@
   #toast { position:fixed; left:50%; bottom:24px; transform:translateX(-50%); background:#333; color:#fff; padding:12px 18px; border-radius:10px; font-size:16px; opacity:0; transition:opacity .2s; pointer-events:none; max-width:90vw; z-index:9; }
   #toast.show { opacity:1; }
   #log { font:12px/1.5 ui-monospace,Menlo,monospace; white-space:pre-wrap; max-height:220px; overflow:auto; background:#111; padding:8px; border-radius:8px; margin:0; color:var(--muted); }
-  .rec-item { display:grid; grid-template-columns:1fr auto auto; gap:8px; align-items:center; padding:8px 0; border-top:1px solid var(--line); font-size:14px; }
+  .rec-item { display:flex; flex-wrap:wrap; gap:8px; align-items:center; padding:8px 0; border-top:1px solid var(--line); font-size:14px; }
+  .rec-item span { flex:1 1 200px; }
   .rec-item button { width:auto; min-height:40px; font-size:14px; padding:0 12px; }
+  .rec-preview { margin:0 0 10px; }
+  .rec-preview video { width:100%; max-height:60vh; background:#000; border-radius:10px; display:block; }
   [hidden] { display:none !important; }
 </style>
 </head>
@@ -591,6 +594,15 @@ function stopRecording(keep, reason) {
   r.onstop = finish;
   try { r.stop(); } catch (e) { log(`recorder stop error: ${e.message}`); finish(); }
 }
+let openPreview = null;
+function closePreview() {
+  if (!openPreview) return;
+  openPreview.video.pause();
+  openPreview.el.hidden = true; openPreview.el.replaceChildren();
+  openPreview.btn.textContent = "Play";
+  URL.revokeObjectURL(openPreview.url);
+  openPreview = null;
+}
 function fmtBytes(n) { return n > 1e6 ? `${(n / 1e6).toFixed(1)} MB` : `${Math.round(n / 1e3)} kB`; }
 async function renderRecordings() {
   const list = $("recList"); list.innerHTML = "";
@@ -601,11 +613,24 @@ async function renderRecordings() {
     const row = document.createElement("div"); row.className = "rec-item";
     const info = document.createElement("span");
     info.textContent = `${new Date(it.date).toLocaleString()} · ${it.secs}s · ${fmtBytes(it.size)}`;
+    const play = document.createElement("button"); play.textContent = "Play";
     const dl = document.createElement("button"); dl.textContent = "Download";
     dl.onclick = () => { const url = URL.createObjectURL(it.blob); const a = document.createElement("a"); a.href = url; a.download = it.name; a.click(); setTimeout(() => URL.revokeObjectURL(url), 60000); };
     const del = document.createElement("button"); del.textContent = "Delete";
-    del.onclick = async () => { await idbDelete("recordings", it.name); renderRecordings(); };
-    row.append(info, dl, del); list.append(row);
+    del.onclick = async () => { closePreview(); await idbDelete("recordings", it.name); renderRecordings(); };
+    const preview = document.createElement("div"); preview.className = "rec-preview"; preview.hidden = true;
+    play.onclick = () => {
+      if (!preview.hidden) { closePreview(); return; }
+      closePreview();
+      const url = URL.createObjectURL(it.blob);
+      const v = document.createElement("video");
+      v.controls = true; v.playsInline = true; v.src = url;
+      preview.replaceChildren(v); preview.hidden = false;
+      openPreview = { el: preview, url, btn: play, video: v };
+      play.textContent = "Hide";
+      v.play().catch(() => {});
+    };
+    row.append(info, play, dl, del); list.append(row, preview);
   }
   if (!items.length) { const p = document.createElement("p"); p.className = "hint"; p.textContent = "No recordings yet."; list.append(p); }
   if (navigator.storage?.estimate) {

@@ -74,7 +74,7 @@ The **Test & debug** section has everything for checking detection without annoy
 
 ## Recordings
 
-With **Record duels** on, the app starts recording whenever someone is in frame and keeps the file only if a duel happens. Recording stops at the victory raise. Files are stored in the browser (IndexedDB) and listed under **Recording** with Download and Delete buttons. Chrome on Android saves them as MP4 or WebM depending on what the device supports. Keep an eye on the storage line, a 10-minute duel is roughly 90 MB at the default bitrate.
+With **Record duels** on, the app starts recording whenever someone is in frame and keeps the file only if a duel happens. Recording stops at the victory raise. Files are stored in the browser (IndexedDB) and listed under **Recording** with Play (inline preview), Download and Delete buttons. Chrome on Android saves them as MP4 or WebM depending on what the device supports. Keep an eye on the storage line, a 10-minute duel is roughly 90 MB at the default bitrate.
 
 Turn on **Record microphone audio too** if you want sound. It asks for microphone permission and restarts the camera.
 
