@@ -110,7 +110,8 @@
       </div>
       <p class="hint">Light a sword, hold it in view, tap "Pick sword color", then tap the glowing part on the video.</p>
       <label class="field"><span class="name">Color tolerance <b id="v_colorTol"></b></span><input type="range" id="colorTol" min="20" max="160" step="5"></label>
-      <label class="field"><span class="name">Minimum glow pixels <b id="v_minGlowPx"></b></span><input type="range" id="minGlowPx" min="10" max="600" step="10"></label>
+      <label class="field"><span class="name">Minimum glow pixels (for the largest piece) <b id="v_minGlowPx"></b></span><input type="range" id="minGlowPx" min="10" max="600" step="10"></label>
+      <label class="field"><span class="name">Join glow pieces closer than <b id="v_joinPx"></b></span><input type="range" id="joinPx" min="1" max="12" step="1"></label>
       <label class="field"><span class="name">Trigger gesture</span>
         <select id="litGesture">
           <option value="sequence">Hold sword upright, then turn it sideways</option>
@@ -253,7 +254,7 @@ const DEFAULTS = {
   mode: "lit", zone: null,
   swordColor: null, colorTol: 70, minGlowPx: 60, raiseLine: 0.4,
   litGesture: "sequence", angleTolDeg: 25, minElong: 3, poseWindowMs: 3000,
-  sfxEnabled: true, sfxVolume: 0.8, swingFull: 1.5, turnFull: 500, clashSens: 0.5, clashContact: true,
+  sfxEnabled: true, sfxVolume: 0.8, swingFull: 1.5, turnFull: 500, clashSens: 0.5, clashContact: true, joinPx: 4,
   grabWindowMs: 3000, raiseHoldMs: 500, visThresh: 0.6, cooldownS: 120,
   victoryHoldMs: 2000, minDuelS: 30, maxDuelMin: 10, victoryAction: "jump", victoryPointS: 245, loopEnabled: true, loopStartS: 15, fadeS: 1,
   topic: null, recordEnabled: true, recordAudio: false,
@@ -398,10 +399,26 @@ video.addEventListener("resize", setupCanvases);
 // ---------- main loop ----------
 // Runs once per camera frame (about 30 fps). The cheap color tracker runs every frame; the pose model only every 1000/TARGET_FPS ms.
 let lastLm = null, lastTrackTs = 0, trackFps = 0;
+// Prefer per-video-frame callbacks; fall back to animation frames if they are unavailable or stall. An error inside a
+// frame is logged and never stops the loop.
+let useRvfc = typeof video.requestVideoFrameCallback === "function", loopGen = 0, lastFrameAt = 0, frameErrors = 0;
 function scheduleFrame() {
-  if (typeof video.requestVideoFrameCallback === "function") video.requestVideoFrameCallback((now) => { frame(now); scheduleFrame(); });
-  else requestAnimationFrame((now) => { frame(now); scheduleFrame(); });
+  const gen = loopGen;
+  const cb = (now) => { if (gen !== loopGen) return; runFrame(now); scheduleFrame(); };
+  if (useRvfc) video.requestVideoFrameCallback(cb); else requestAnimationFrame(cb);
 }
+function runFrame(now) {
+  lastFrameAt = performance.now();
+  try { frame(now); }
+  catch (e) { if (frameErrors++ < 5) log(`frame error: ${e.message}`); console.error(e); }
+}
+setInterval(() => {
+  if (useRvfc && video.readyState >= 2 && !video.paused && performance.now() - lastFrameAt > 1500) {
+    useRvfc = false; loopGen++; log("video frame callbacks stalled, switching to animation frames"); scheduleFrame();
+  }
+}, 1000);
+window.addEventListener("error", (e) => log(`error: ${e.message}`));
+window.addEventListener("unhandledrejection", (e) => log(`error: ${e.reason && e.reason.message || e.reason}`));
 function frame(now) {
   if (video.readyState < 2 || video.paused || !infer.width) return;
   const tdt = now - lastTrackTs; lastTrackTs = now;
@@ -503,9 +520,11 @@ function analyze(lm) {
 // blobs big enough to be a sword, largest first.
 const scratch = { w: 0, h: 0, mask: null, cells: null, labels: null, stack: null };
 function findGlow() {
-  const w = infer.width, h = infer.height, cw = w >> 1, ch = h >> 1;
-  if (scratch.w !== w || scratch.h !== h) {
-    Object.assign(scratch, { w, h, mask: new Uint8Array(w * h), cells: new Uint8Array(cw * ch), labels: new Int32Array(cw * ch), stack: new Int32Array(cw * ch) });
+  // Blobs are labelled on a coarse grid of joinPx-sized cells, so pieces of one sword closer than that are joined
+  // (a bright blade often photographs as a white core with colored fringes on each side).
+  const w = infer.width, h = infer.height, cs = Math.max(1, Math.round(S.joinPx)), cw = Math.ceil(w / cs), ch = Math.ceil(h / cs);
+  if (scratch.w !== w || scratch.h !== h || scratch.cs !== cs) {
+    Object.assign(scratch, { w, h, cs, mask: new Uint8Array(w * h), cells: new Uint8Array(cw * ch), labels: new Int32Array(cw * ch), stack: new Int32Array(cw * ch) });
   }
   const { mask, cells, labels, stack } = scratch;
   cells.fill(0); labels.fill(0);
@@ -516,7 +535,7 @@ function findGlow() {
     const i = (y * w + x) * 4, dr = img[i] - r, dg = img[i + 1] - g, db = img[i + 2] - b;
     const m = dr * dr + dg * dg + db * db <= tol2 ? 1 : 0;
     mask[y * w + x] = m;
-    if (m) { cells[(y >> 1) * cw + (x >> 1)] = 1; total++; }
+    if (m) { cells[((y / cs) | 0) * cw + ((x / cs) | 0)] = 1; total++; }
   }
   if (!total) { orientHistory.length = 0; return { count: 0, total: 0, blobs: [] }; }
   // Label connected groups on a half-resolution grid (8-connected), which also bridges 1-pixel gaps.
@@ -538,7 +557,7 @@ function findGlow() {
   // Pixel-precise sums per group.
   for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
     if (!mask[y * w + x]) continue;
-    const c = comps[labels[(y >> 1) * cw + (x >> 1)] - 1];
+    const c = comps[labels[((y / cs) | 0) * cw + ((x / cs) | 0)] - 1];
     c.count++; c.sx += x; c.sy += y; c.sxx += x * x; c.syy += y * y; c.sxy += x * y;
     if (x < c.minX) c.minX = x; if (x > c.maxX) c.maxX = x; if (y < c.minY) c.minY = y; if (y > c.maxY) c.maxY = y;
   }
@@ -547,6 +566,7 @@ function findGlow() {
   const primary = blobs[0] || blobStats(comps[0], w, h);
   const o = smoothOrientation(primary.rawAngle, primary.rawElong);
   primary.angle = o.angle; primary.elong = o.elong; primary.total = total; primary.blobs = blobs;
+  primary.pieces = comps.filter((c) => c.count >= 8).length;
   return primary;
 }
 // Orientation of a blob from its pixel spread (principal axis). angle: 0 = sideways, ±90 = upright.
@@ -1233,8 +1253,8 @@ function renderLive(sig) {
     const g = sig.glow;
     if (!g) parts.push("glow: pick a sword color first");
     else if (!g.count) parts.push(`glow 0px (need ${S.minGlowPx})`);
-    else if (S.litGesture === "sequence") parts.push(`glow ${g.count}px (need ${S.minGlowPx})  angle ${Math.round(Math.abs(g.angle))}° (0=sideways, 90=upright)  elongation ${g.elong.toFixed(1)}× (need ${S.minElong})  → ${glowPose(sig) || (glowLit(sig) ? "too round" : "not lit")}`);
-    else parts.push(`glow ${g.count}px (need ${S.minGlowPx}) top ${g.top.toFixed(2)} vs line ${sig.raiseY.toFixed(2)}`);
+    else if (S.litGesture === "sequence") parts.push(`glow ${g.count}px (need ${S.minGlowPx}; ${g.total}px in ${g.pieces} pieces)  angle ${Math.round(Math.abs(g.angle))}° (0=sideways, 90=upright)  elongation ${g.elong.toFixed(1)}× (need ${S.minElong})  → ${glowPose(sig) || (glowLit(sig) ? "too round" : "not lit")}`);
+    else parts.push(`glow ${g.count}px (need ${S.minGlowPx}; ${g.total}px in ${g.pieces} pieces) top ${g.top.toFixed(2)} vs line ${sig.raiseY.toFixed(2)}`);
     if (sm.state === "TURN") parts.push(`upright done, turn sideways within ${Math.max(0, ((sm.windowStart + S.poseWindowMs - performance.now()) / 1000)).toFixed(1)} s`);
     if (g && g.count && glowLit(sig)) {
       parts.push(`swords in view: ${g.blobs.length}${g.total > g.count ? ` (largest ${g.count} of ${g.total} matching px)` : ""}`);
@@ -1257,6 +1277,7 @@ const FMT = {
   minDuelS: (v) => `${v} s`, maxDuelMin: (v) => `${v} min`, fadeS: (v) => v ? `${v.toFixed(2)} s` : "no fade",
   angleTolDeg: (v) => `±${v}°`, minElong: (v) => `${v.toFixed(1)}×`, poseWindowMs: (v) => `${(v / 1000).toFixed(1)} s`,
   sfxVolume: (v) => `${Math.round(v * 100)}%`, swingFull: (v) => `${v.toFixed(1)} W/s`, turnFull: (v) => `${v}°/s`, clashSens: (v) => v ? `${Math.round(v * 100)}%` : "off",
+  joinPx: (v) => `${v} px (of ${INFER_WIDTH} across)`,
 };
 $("sfxVolume").addEventListener("input", () => { if (sfx.master) sfx.master.gain.setTargetAtTime(S.sfxVolume, sfx.ctx.currentTime, 0.02); });
 $("fontFiles").addEventListener("change", (e) => { if (e.target.files.length) loadFont(Array.from(e.target.files), true); });

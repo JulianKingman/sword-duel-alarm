@@ -107,7 +107,8 @@ Turn on **Record microphone audio too** if you want sound. It asks for microphon
 | Setting | What it does |
 |---|---|
 | Color tolerance | How far a pixel may be from the sampled color and still count. Raise it if the glow is missed, lower it if walls or clothes match. |
-| Minimum glow pixels | How many matching pixels mean "a sword is lit". Watch the live count with the sword on and off and pick a value in between. |
+| Minimum glow pixels | How many matching pixels in the largest connected piece mean "a sword is lit". Watch the live count with the sword on and off and pick a value in between. |
+| Join glow pieces closer than | A bright blade often shows as a white core with colored edges, which would split into pieces. Pieces closer than this many pixels (on the 320-pixel-wide analysis frame) count as one sword. If the readout shows one sword as several pieces, raise it; if two separate swords merge too early, lower it. |
 | Fallback raise line | Used only when no shoulders are visible. The glow top must be above this line to count as raised. |
 | Raise hold time | How long the raise must last before triggering. |
 | Grab → raise window | Pose mode only. Time allowed between leaving the rack and raising. |
