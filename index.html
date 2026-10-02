@@ -720,8 +720,9 @@ function victory() {
   sm.victoryTime = performance.now();
   setState("VICTORY");
   flash("🏆 VICTORY");
-  log(`VICTORY: sword raised again${S.testMode ? " (test mode)" : ""}`);
+  log(`VICTORY: sword raised again${S.testMode ? " (test mode, no actions)" : armed ? "" : " (not armed, no actions)"}`);
   if (armed && !S.testMode) {
+    log(`victory music: action=${S.victoryAction}, point=${S.victoryPointS == null ? "none" : fmtTime(S.victoryPointS)}, song ${audio.src ? (audio.paused ? "paused" : "playing") + ` at ${fmtTime(Math.round(audio.currentTime))}` : "not loaded"}`);
     victoryMusic();
     notify("🏆 Duel over", "Someone raised their sword in victory.", 3);
   }
@@ -771,18 +772,30 @@ function stopSong() { songWanted = false; looping = false; fadeToken++; audio.pa
 audio.addEventListener("ended", () => { looping = false; songWanted = false; });
 
 // Volume fades. A new fade cancels any fade in progress.
-let fadeToken = 0, looping = false, seamBusy = false;
+let fadeToken = 0, looping = false, seamBusy = false, seamStarted = 0;
+// Timer-driven (not animation-frame) so it keeps going when the browser throttles rendering. iOS ignores volume changes,
+// so there the fade is simply instant.
 function fadeTo(target, ms) {
   const token = ++fadeToken, from = audio.volume, t0 = performance.now();
   return new Promise((res) => {
     if (ms <= 0) { audio.volume = target; res(); return; }
-    const tick = (now) => {
+    const tick = () => {
       if (token !== fadeToken) { res(); return; }
-      const k = Math.min(1, (now - t0) / ms);
-      audio.volume = from + (target - from) * k;
-      if (k < 1) requestAnimationFrame(tick); else res();
+      const k = Math.min(1, (performance.now() - t0) / ms);
+      try { audio.volume = from + (target - from) * k; } catch {}
+      if (k < 1) setTimeout(tick, 25); else res();
     };
-    requestAnimationFrame(tick);
+    tick();
+  });
+}
+// Seek and wait until the browser has actually moved (Safari seeks asynchronously); give up waiting after 1.5 s.
+function seekTo(t) {
+  return new Promise((res) => {
+    let done = false;
+    const finish = () => { if (done) return; done = true; audio.removeEventListener("seeked", finish); res(); };
+    audio.addEventListener("seeked", finish);
+    try { audio.currentTime = t; } catch (e) { log(`seek failed: ${e.message}`); finish(); return; }
+    setTimeout(finish, 1500);
   });
 }
 function clampTime(t) {
@@ -791,19 +804,20 @@ function clampTime(t) {
 }
 // Fade out (if playing), seek, then fade back in.
 async function seekWithFade(t, reason) {
-  if (!audio.src) { log("no song loaded"); return; }
-  if (seamBusy) return;
-  seamBusy = true; songWanted = true;
-  const ms = S.fadeS * 1000;
+  if (!audio.src) { log(`${reason}: no song loaded`); return; }
+  if (seamBusy && performance.now() - seamStarted < 6000) { log(`${reason}: skipped, another transition is still running`); return; }
+  seamBusy = true; seamStarted = performance.now(); songWanted = true;
+  const ms = S.fadeS * 1000, target = clampTime(t);
   try {
     if (!audio.paused) await fadeTo(0, ms);
-    audio.currentTime = clampTime(t);
+    await seekTo(target);
+    if (Math.abs(audio.currentTime - target) > 2) { log(`${reason}: seek landed at ${fmtTime(Math.round(audio.currentTime))}, retrying`); await seekTo(target); }
     audio.volume = 0;
     await audio.play();
     await fadeTo(1, ms);
-    log(`${reason}: song now at ${fmtTime(clampTime(t))}`);
+    log(`${reason}: song now at ${fmtTime(Math.round(audio.currentTime))} (asked for ${fmtTime(target)})`);
   } catch (e) {
-    audio.volume = 1; log(`play failed: ${e.message}`); toast("Playback blocked. Tap Arm again.");
+    audio.volume = 1; log(`${reason}: play failed: ${e.message}`); toast("Playback blocked. Tap Arm again.");
   } finally { seamBusy = false; }
 }
 // The duel loop: when the song reaches the victory point, fade back to the loop start.
