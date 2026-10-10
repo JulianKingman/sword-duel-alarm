@@ -189,7 +189,7 @@
 
   <section>
     <h2>Audio</h2>
-    <input type="file" id="songFile" accept="audio/*">
+    <input type="file" id="songFile">
     <p class="hint" id="songText">No song loaded.</p>
     <audio id="audio" preload="auto"></audio>
   </section>
@@ -1141,6 +1141,13 @@ function loadSong(blob, name) {
   audio.src = songURL;
   $("songText").textContent = `Loaded: ${name}`;
 }
+audio.addEventListener("error", () => {
+  if (!audio.src) return;
+  const why = audio.error ? audio.error.message || `code ${audio.error.code}` : "unknown";
+  log(`song failed to load: ${why}`);
+  $("songText").textContent = "This file could not be played. Pick an MP3 or another audio file.";
+  toast("That file could not be played");
+});
 audio.addEventListener("loadedmetadata", () => {
   if (isFinite(audio.duration)) $("songText").textContent += ` (${fmtTime(Math.round(audio.duration))})`;
   render();
